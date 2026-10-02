@@ -11,9 +11,16 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseHttpsRedirection();
 }
 
-app.UseHttpsRedirection();
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    service = "BonBon.API",
+    timestamp = DateTimeOffset.UtcNow
+}));
+
 app.MapControllers();
 
 app.Run();
