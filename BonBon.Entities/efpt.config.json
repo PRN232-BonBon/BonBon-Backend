@@ -1,0 +1,134 @@
+﻿{
+   "CodeGenerationMode": 4,
+   "ContextClassName": "bonbonContext",
+   "ContextNamespace": null,
+   "FilterSchemas": false,
+   "IncludeConnectionString": false,
+   "IrregularWords": null,
+   "MinimumProductVersion": "2.6.1378",
+   "ModelNamespace": null,
+   "OutputContextPath": null,
+   "OutputPath": "Models",
+   "PluralRules": null,
+   "PreserveCasingWithRegex": true,
+   "ProjectRootNamespace": "BonBon.Entities",
+   "Schemas": null,
+   "SelectedHandlebarsLanguage": 2,
+   "SelectedToBeGenerated": 0,
+   "SingularRules": null,
+   "T4TemplatePath": null,
+   "Tables": [
+      {
+         "Name": "bonbon.account",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.account_role",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.additional_charge",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.availability_block",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.booking",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.message",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.payment",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.role",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.vehicle",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.vehicle_image",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.vehicle_inspection",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.vehicle_location",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.wallet",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.wallet_transaction",
+         "ObjectType": 0
+      },
+      {
+         "Name": "bonbon.check_actor_eligibility",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.check_message_participant",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.check_vehicle_schedule",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.create_booking",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.has_active_role",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.protect_booking_quote",
+         "ObjectType": 1
+      },
+      {
+         "Name": "bonbon.protect_vehicle_owner",
+         "ObjectType": 1
+      }
+   ],
+   "UiHint": null,
+   "UncountableWords": null,
+   "UseAsyncStoredProcedureCalls": true,
+   "UseBoolPropertiesWithoutDefaultSql": false,
+   "UseDatabaseNames": true,
+   "UseDatabaseNamesForRoutines": true,
+   "UseDateOnlyTimeOnly": true,
+   "UseDbContextSplitting": false,
+   "UseDecimalDataAnnotationForSprocResult": true,
+   "UseFluentApiOnly": true,
+   "UseHandleBars": false,
+   "UseHierarchyId": false,
+   "UseInflector": true,
+   "UseInternalAccessModifiersForSprocsAndFunctions": false,
+   "UseLegacyPluralizer": false,
+   "UseManyToManyEntity": false,
+   "UseNoDefaultConstructor": false,
+   "UseNoNavigations": false,
+   "UseNoObjectFilter": false,
+   "UseNodaTime": false,
+   "UseNullableReferences": false,
+   "UsePrefixNavigationNaming": false,
+   "UseSchemaFolders": false,
+   "UseSchemaNamespaces": false,
+   "UseSpatial": false,
+   "UseT4": false,
+   "UseT4Split": false,
+   "UseTypedTvpParameters": true
+}

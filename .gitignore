@@ -8,6 +8,7 @@
 .env.*
 !.env.example
 appsettings.Local.json
+appsettings.Development.json
 secrets.json
 TestResults/
 coverage/

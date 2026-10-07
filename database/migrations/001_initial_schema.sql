@@ -59,6 +59,20 @@ CREATE INDEX ix_account_role_role_status ON account_role (role_id, status);
 -- controlled: public registration must never accept an arbitrary role from a client.
 -- Account suspension disables every role; membership suspension affects one role.
 
+CREATE TABLE refresh_token (
+    refresh_token_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id uuid NOT NULL REFERENCES account(account_id) ON DELETE CASCADE,
+    token_hash varchar(512) NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    revoked_at timestamptz,
+    device_info text
+);
+CREATE UNIQUE INDEX uq_refresh_token_hash ON refresh_token (token_hash);
+CREATE INDEX ix_refresh_token_account_active ON refresh_token (account_id, revoked_at);
+-- Stores SHA-256 hash of the raw token sent to the client — never store raw.
+-- revoked_at NULL = still active. Rotate on every refresh (old revoked, new issued).
+
 CREATE TABLE vehicle (
     vehicle_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_account_id uuid NOT NULL,
