@@ -143,7 +143,7 @@ public partial class bonbonContext : DbContext
         {
             entity.HasKey(e => e.booking_id).HasName("booking_pkey");
 
-            entity.ToTable("booking", "bonbon", tb => tb.HasComment("Hourly/Daily rental; Quantity defines hours/days, quote excludes additional charges."));
+            entity.ToTable("booking", "bonbon", tb => tb.HasComment("Hourly/Daily rental with flexible return time; BillableUnits defines billed hours/days."));
 
             entity.HasIndex(e => new { e.customer_account_id, e.created_at }, "ix_booking_customer_created").IsDescending(false, true);
 
@@ -152,6 +152,7 @@ public partial class bonbonContext : DbContext
             entity.HasIndex(e => new { e.booking_id, e.vehicle_id }, "uq_booking_vehicle").IsUnique();
 
             entity.Property(e => e.booking_id).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.billable_units).HasComment("Hourly: exact hours from 4 to 8. Daily: ceil of elapsed time divided by 24 hours.");
             entity.Property(e => e.created_at).HasDefaultValueSql("now()");
             entity.Property(e => e.currency)
                 .IsRequired()
@@ -163,7 +164,7 @@ public partial class bonbonContext : DbContext
             entity.Property(e => e.end_at).HasComment("Booked return deadline, not the actual return time.");
             entity.Property(e => e.quoted_rental_amount)
                 .HasPrecision(18, 2)
-                .HasComputedColumnSql("((quantity)::numeric * unit_price_snapshot)", true)
+                .HasComputedColumnSql("((billable_units)::numeric * unit_price_snapshot)", true)
                 .HasComment("Generated: Quantity * UnitPriceSnapshot. Omit from INSERT/UPDATE.");
             entity.Property(e => e.rental_type)
                 .IsRequired()
@@ -271,10 +272,10 @@ public partial class bonbonContext : DbContext
                 .HasMaxLength(80);
             entity.Property(e => e.day_price)
                 .HasPrecision(18, 2)
-                .HasComment("VND per day of exactly 24 hours.");
+                .HasComment("VND per billable 24-hour period.");
             entity.Property(e => e.hour_price)
                 .HasPrecision(18, 2)
-                .HasComment("VND per hour. 4h and 8h are UI presets only.");
+                .HasComment("VND per hour for rentals from 4 to 8 hours.");
             entity.Property(e => e.model)
                 .IsRequired()
                 .HasMaxLength(100);

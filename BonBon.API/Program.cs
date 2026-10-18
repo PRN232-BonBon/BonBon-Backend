@@ -20,10 +20,12 @@ builder.Services.AddDbContext<BonBonDbContext>(options =>
 // ─── Repositories ────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
 
 // ─── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IBookingService, BookingService>();
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"]
@@ -57,7 +59,8 @@ builder.Services.AddCors(options =>
     options.AddPolicy("FrontendDev", policy => policy
         .WithOrigins(
             "http://localhost:3000",   // Vite dev server
-            "http://localhost:5173")   // Vite default fallback
+            "http://localhost:5173",   // Vite default fallback
+            "http://127.0.0.1:5173")  // Codex/browser local preview
         .AllowAnyHeader()
         .AllowAnyMethod());
 });

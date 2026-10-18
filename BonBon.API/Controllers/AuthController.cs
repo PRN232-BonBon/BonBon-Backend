@@ -184,4 +184,26 @@ public class AuthController(IAuthService authService) : ControllerBase
         await _authService.LogoutAllDevicesAsync(accountId, ct);
         return NoContent();
     }
+
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> ChangePassword(
+        [FromBody] ChangePasswordRequest request,
+        CancellationToken ct)
+    {
+        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
+
+        var result = await _authService.ChangePasswordAsync(accountId, request, ct);
+        if (!result.IsSuccess)
+            return BadRequest(new ProblemDetails
+            {
+                Title = result.ErrorCode,
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status400BadRequest,
+            });
+
+        return NoContent();
+    }
 }

@@ -27,12 +27,12 @@ public partial class vehicle
     public string pickup_address { get; set; }
 
     /// <summary>
-    /// VND per hour. 4h and 8h are UI presets only.
+    /// VND per hour for rentals from 4 to 8 hours.
     /// </summary>
     public decimal hour_price { get; set; }
 
     /// <summary>
-    /// VND per day of exactly 24 hours.
+    /// VND per billable 24-hour period.
     /// </summary>
     public decimal day_price { get; set; }
 

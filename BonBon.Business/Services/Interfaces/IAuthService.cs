@@ -22,4 +22,6 @@ public interface IAuthService
 
     /// <summary>Đăng xuất toàn bộ thiết bị — revoke tất cả refresh token của account.</summary>
     Task<ServiceResult> LogoutAllDevicesAsync(Guid accountId, CancellationToken ct = default);
+
+    Task<ServiceResult> ChangePasswordAsync(Guid accountId, ChangePasswordRequest request, CancellationToken ct = default);
 }

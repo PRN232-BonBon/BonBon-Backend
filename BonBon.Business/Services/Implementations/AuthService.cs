@@ -217,6 +217,25 @@ public class AuthService(
         return ServiceResult.Success();
     }
 
+    public async Task<ServiceResult> ChangePasswordAsync(
+        Guid accountId,
+        ChangePasswordRequest request,
+        CancellationToken ct = default)
+    {
+        var account = await _accountRepo.GetByIdWithRolesAsync(accountId, ct);
+        if (account is null)
+            return ServiceResult.Failure("ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản.");
+        if (string.IsNullOrWhiteSpace(account.PasswordHash) ||
+            !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, account.PasswordHash))
+            return ServiceResult.Failure("INVALID_CURRENT_PASSWORD", "Mật khẩu hiện tại không đúng.");
+        if (request.CurrentPassword == request.NewPassword)
+            return ServiceResult.Failure("PASSWORD_UNCHANGED", "Mật khẩu mới phải khác mật khẩu hiện tại.");
+
+        account.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        await _accountRepo.SaveChangesAsync(ct);
+        return ServiceResult.Success();
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------

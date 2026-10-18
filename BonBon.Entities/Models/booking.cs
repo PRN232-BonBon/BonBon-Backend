@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace BonBon.Entities.Models;
 
 /// <summary>
-/// Hourly/Daily rental; Quantity defines hours/days, quote excludes additional charges.
+/// Hourly/Daily rental with flexible return time; billable units define hours/days.
 /// </summary>
 public partial class booking
 {
@@ -21,7 +21,10 @@ public partial class booking
 
     public string rental_type { get; set; }
 
-    public int quantity { get; set; }
+    /// <summary>
+    /// Hourly: exact hours from 4 to 8. Daily: elapsed 24-hour periods rounded up.
+    /// </summary>
+    public int billable_units { get; set; }
 
     public DateTime start_at { get; set; }
 
