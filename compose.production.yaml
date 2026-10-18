@@ -1,0 +1,4 @@
+services:
+  api:
+    image: ${API_IMAGE:?Set API_IMAGE to the immutable GHCR image tag}
+

@@ -5,6 +5,7 @@ using BonBon.DataAccess;
 using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -28,8 +29,9 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
-var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? throw new InvalidOperationException("Jwt:Key is not configured.");
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+    throw new InvalidOperationException("Jwt:Key must be configured with at least 32 characters.");
 
 builder.Services.AddAuthentication(options =>
 {
@@ -54,15 +56,23 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? [];
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("FrontendDev", policy => policy
-        .WithOrigins(
-            "http://localhost:3000",   // Vite dev server
-            "http://localhost:5173",   // Vite default fallback
-            "http://127.0.0.1:5173")  // Codex/browser local preview
+    options.AddPolicy("Frontend", policy => policy
+        .WithOrigins(allowedOrigins)
         .AllowAnyHeader()
         .AllowAnyMethod());
+});
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
 });
 
 // ─── Controllers ─────────────────────────────────────────────────────────────
@@ -108,17 +118,15 @@ builder.Services.AddSwaggerGen(c =>
 // ─── Build ───────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
+app.UseForwardedHeaders();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    app.UseCors("FrontendDev");
-}
-else
-{
-    app.UseHttpsRedirection();
 }
 
+app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 

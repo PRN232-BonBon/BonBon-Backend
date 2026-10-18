@@ -47,6 +47,14 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${POSTGRES_DB:-bonbon};Username=${POSTGRES_USER:-bonbon_app};Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY:?Set JWT_KEY in .env}
+      Jwt__Issuer: ${JWT_ISSUER:-BonBon.API}
+      Jwt__Audience: ${JWT_AUDIENCE:-BonBon.Client}
+      Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES:-60}
+      Jwt__RefreshTokenDays: ${JWT_REFRESH_TOKEN_DAYS:-30}
+      Google__ClientId: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}
+      Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-https://bonbon.kitsuracloud.com}
+      Cors__AllowedOrigins__1: ${FRONTEND_PREVIEW_ORIGIN:-http://localhost:5173}
     ports:
       - "8080:8080"
     depends_on:
