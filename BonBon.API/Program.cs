@@ -1,4 +1,6 @@
 using System.Text;
+using BonBon.API.Hubs;
+using BonBon.API.Services;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.Services.Interfaces;
 using BonBon.DataAccess;
@@ -22,11 +24,16 @@ builder.Services.AddDbContext<BonBonDbContext>(options =>
 builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
+builder.Services.AddScoped<ITrackingRepository,     TrackingRepository>();
 
 // ─── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<ITrackingService, TrackingService>();
+builder.Services.AddHttpClient("Traccar", client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<TraccarTrackingWorker>();
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"];
@@ -51,6 +58,16 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
         ClockSkew                = TimeSpan.Zero, // Không cho phép trễ
     };
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) && context.Request.Path.StartsWithSegments("/hubs/tracking"))
+                context.Token = accessToken;
+            return Task.CompletedTask;
+        },
+    };
 });
 
 builder.Services.AddAuthorization();
@@ -65,7 +82,8 @@ builder.Services.AddCors(options =>
     options.AddPolicy("Frontend", policy => policy
         .WithOrigins(allowedOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod());
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -138,5 +156,6 @@ app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.MapControllers();
+app.MapHub<TrackingHub>("/hubs/tracking");
 
 app.Run();

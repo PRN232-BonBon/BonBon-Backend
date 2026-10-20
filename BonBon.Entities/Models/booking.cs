@@ -33,6 +33,14 @@ public partial class booking
     /// </summary>
     public DateTime end_at { get; set; }
 
+    public decimal? pickup_meeting_latitude { get; set; }
+
+    public decimal? pickup_meeting_longitude { get; set; }
+
+    public decimal? return_meeting_latitude { get; set; }
+
+    public decimal? return_meeting_longitude { get; set; }
+
     /// <summary>
     /// Price selected at booking; independent of later Vehicle price edits.
     /// </summary>

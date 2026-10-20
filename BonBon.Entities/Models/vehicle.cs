@@ -38,6 +38,8 @@ public partial class vehicle
 
     public string status { get; set; }
 
+    public long? traccar_device_id { get; set; }
+
     public virtual account_role account_role { get; set; }
 
     public virtual ICollection<availability_block> availability_blocks { get; set; } = new List<availability_block>();

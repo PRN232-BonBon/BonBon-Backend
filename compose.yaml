@@ -24,6 +24,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+      - ./database/migrations/003_vehicle_tracking.sql:/docker-entrypoint-initdb.d/003_vehicle_tracking.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -53,6 +54,8 @@ services:
       Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES:-60}
       Jwt__RefreshTokenDays: ${JWT_REFRESH_TOKEN_DAYS:-30}
       Google__ClientId: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}
+      Traccar__BaseUrl: ${TRACCAR_BASE_URL:-}
+      Traccar__ApiToken: ${TRACCAR_API_TOKEN:-}
       Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-https://bonbon.kitsuracloud.com}
       Cors__AllowedOrigins__1: ${FRONTEND_PREVIEW_ORIGIN:-http://localhost:5173}
     ports:

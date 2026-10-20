@@ -162,6 +162,10 @@ public partial class bonbonContext : DbContext
                 .HasComputedColumnSql("(2)::smallint", true)
                 .HasComment("Generated constant 2; composite FK enforces Customer membership.");
             entity.Property(e => e.end_at).HasComment("Booked return deadline, not the actual return time.");
+            entity.Property(e => e.pickup_meeting_latitude).HasPrecision(9, 6);
+            entity.Property(e => e.pickup_meeting_longitude).HasPrecision(10, 6);
+            entity.Property(e => e.return_meeting_latitude).HasPrecision(9, 6);
+            entity.Property(e => e.return_meeting_longitude).HasPrecision(10, 6);
             entity.Property(e => e.quoted_rental_amount)
                 .HasPrecision(18, 2)
                 .HasComputedColumnSql("((billable_units)::numeric * unit_price_snapshot)", true)
@@ -265,6 +269,9 @@ public partial class bonbonContext : DbContext
             entity.ToTable("vehicle", "bonbon");
 
             entity.HasIndex(e => e.owner_account_id, "ix_vehicle_owner");
+            entity.HasIndex(e => e.traccar_device_id, "uq_vehicle_traccar_device_id")
+                .IsUnique()
+                .HasFilter("traccar_device_id IS NOT NULL");
 
             entity.Property(e => e.vehicle_id).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.brand)
