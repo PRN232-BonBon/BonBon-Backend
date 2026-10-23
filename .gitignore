@@ -12,3 +12,7 @@ appsettings.Development.json
 secrets.json
 TestResults/
 coverage/
+# Local payment test credentials. Never print, commit or copy to test output.
+**/.payment-test.local.json
+**/.payment-staging*.local.json
+**/.payment*.local.json

@@ -17,4 +17,13 @@
     <ProjectReference Include="..\BonBon.Entities\BonBon.Entities.csproj" />
   </ItemGroup>
 
+  <!-- Local credentials are loaded only by explicit absolute path. Git ignore
+       does not prevent Web SDK content copying into build/publish artifacts. -->
+  <ItemGroup>
+    <Content Remove="**/.payment*.local.json" />
+    <None Remove="**/.payment*.local.json" />
+    <Content Remove="appsettings.Local.json;appsettings.Development.json;secrets.json" />
+    <None Remove="appsettings.Local.json;appsettings.Development.json;secrets.json" />
+  </ItemGroup>
+
 </Project>

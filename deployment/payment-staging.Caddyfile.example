@@ -1,0 +1,71 @@
+# REVIEW TEMPLATE ONLY: not deployed; public exposure needs explicit approval.
+# Dedicated Caddy instance directly at the HTTPS edge, NO CDN/tunnel in front.
+# Required env: PAYMENT_STAGING_HOST (DNS only, never production),
+# PAYMENT_STAGING_FRONTEND_ROOT (absolute dist-payment-staging directory),
+# PAYMENT_STAGING_OPERATOR_CIDRS (space-separated tester IPs, never /0).
+# API remains loopback-only. No PostgreSQL/Tailscale proxy.
+# Keep runtime/error logs private: they may contain callback URLs.
+{$PAYMENT_STAGING_HOST} {
+    header {
+        Referrer-Policy "no-referrer"
+        X-Content-Type-Options "nosniff"
+        Cache-Control "no-store"
+    }
+    log {
+        output discard
+    }
+    @production host bonbon.kitsuracloud.com *.bonbon.kitsuracloud.com
+    @callback {
+        method GET
+        path /api/payments/vnpay/ipn /api/payments/vnpay/return/redirect
+    }
+    @testerGet {
+        remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}
+        method GET
+        path /api/bookings/mine
+    }
+    @testerPayment {
+        remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}
+        method GET
+        path_regexp paymentId ^/api/payments/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    }
+    @testerAuth {
+        remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}
+        method POST
+        path /api/auth/login /api/auth/refresh /api/auth/logout
+    }
+    @testerSpa {
+        remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}
+        method GET HEAD
+        path / /my-trips /payment/result /assets/* /favicon.svg /vite.svg
+    }
+    # Fixed order: callbacks -> restricted human routes -> deny everything else.
+    route {
+        respond @production 403
+        handle @callback {
+            reverse_proxy 127.0.0.1:5288 {
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto https
+                header_up -Forwarded
+                header_up -X-Forwarded-Host
+            }
+        }
+        handle @testerGet {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerPayment {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerAuth {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerSpa {
+            root * {$PAYMENT_STAGING_FRONTEND_ROOT}
+            try_files {path} /index.html
+            file_server
+        }
+        # POST /api/payments deliberately blocked until a separate 2F.3 review.
+        # Also deny health/admin/debug/test/Swagger, dotfiles and Vite dev paths.
+        respond 404
+    }
+}

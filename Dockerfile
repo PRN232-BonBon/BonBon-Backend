@@ -6,7 +6,7 @@ COPY BonBon.API/BonBon.API.csproj BonBon.API/
 COPY BonBon.Business/BonBon.Business.csproj BonBon.Business/
 COPY BonBon.DataAccess/BonBon.DataAccess.csproj BonBon.DataAccess/
 COPY BonBon.Entities/BonBon.Entities.csproj BonBon.Entities/
-RUN dotnet restore BonBon.sln
+RUN dotnet restore BonBon.API/BonBon.API.csproj
 
 COPY . .
 RUN dotnet publish BonBon.API/BonBon.API.csproj \

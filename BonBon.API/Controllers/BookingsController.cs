@@ -13,6 +13,50 @@ public sealed class BookingsController(IBookingService bookingService) : Control
 {
     private readonly IBookingService _bookingService = bookingService;
 
+    [HttpPost("{bookingId:guid}/approve")]
+    [Authorize(Roles = "VehicleOwner")]
+    [ProducesResponseType(typeof(BookingDecisionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Approve(Guid bookingId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var accountId) || accountId == Guid.Empty)
+            return Unauthorized();
+        var result = await _bookingService.ApproveAsync(accountId, bookingId, ct);
+        return result.IsSuccess ? Ok(result.Data) : DecisionProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{bookingId:guid}/reject")]
+    [Authorize(Roles = "VehicleOwner")]
+    [ProducesResponseType(typeof(BookingDecisionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Reject(Guid bookingId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var accountId) || accountId == Guid.Empty)
+            return Unauthorized();
+        var result = await _bookingService.RejectAsync(accountId, bookingId, ct);
+        return result.IsSuccess ? Ok(result.Data) : DecisionProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    private ObjectResult DecisionProblem(string code, string detail)
+    {
+        var status = code switch
+        {
+            "BOOKING_ID_INVALID" => StatusCodes.Status400BadRequest,
+            "BOOKING_NOT_FOUND" => StatusCodes.Status404NotFound,
+            "BOOKING_NOT_OWNER" or "OWNER_INACTIVE" => StatusCodes.Status403Forbidden,
+            _ => StatusCodes.Status409Conflict,
+        };
+        return StatusCode(status, new ProblemDetails { Title = code, Detail = detail, Status = status });
+    }
+
     [HttpPost("validate-window")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(RentalWindowResponse), StatusCodes.Status200OK)]

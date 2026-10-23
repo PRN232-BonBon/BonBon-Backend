@@ -11,6 +11,58 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
     private readonly IBookingRepository _bookingRepository = bookingRepository;
 
+    public Task<ServiceResult<BookingDecisionResponse>> ApproveAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Approve, ct);
+
+    public Task<ServiceResult<BookingDecisionResponse>> RejectAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Reject, ct);
+
+    private async Task<ServiceResult<BookingDecisionResponse>> DecideAsync(
+        Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct)
+    {
+        if (ownerAccountId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("OWNER_INACTIVE", "Tài khoản chủ xe không hợp lệ.");
+        if (bookingId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_ID_INVALID", "Mã đặt xe không hợp lệ.");
+        try
+        {
+            var result = await _bookingRepository.DecideAsync(ownerAccountId, bookingId, decision, ct);
+            if (result.Outcome is BookingDecisionOutcome.Applied or BookingDecisionOutcome.AlreadyApplied)
+            {
+                var item = result.Booking ?? throw new InvalidOperationException("Missing booking decision snapshot.");
+                return ServiceResult<BookingDecisionResponse>.Success(new(item.BookingId, item.Status,
+                    item.UnitPrice, item.QuotedRentalAmount, item.Currency,
+                    result.Outcome == BookingDecisionOutcome.AlreadyApplied));
+            }
+            var (code, message) = result.Outcome switch
+            {
+                BookingDecisionOutcome.NotFound => ("BOOKING_NOT_FOUND", "Không tìm thấy đơn đặt xe."),
+                BookingDecisionOutcome.NotOwner => ("BOOKING_NOT_OWNER", "Bạn không phải chủ xe của đơn đặt này."),
+                BookingDecisionOutcome.OwnerInactive => ("OWNER_INACTIVE", "Tài khoản và vai trò chủ xe phải đang hoạt động."),
+                BookingDecisionOutcome.CustomerInactive => ("CUSTOMER_INACTIVE", "Tài khoản và vai trò khách hàng không còn hoạt động."),
+                BookingDecisionOutcome.VehicleUnavailable => ("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt đặt xe."),
+                BookingDecisionOutcome.ScheduleConflict => ("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này."),
+                BookingDecisionOutcome.BookingWindowPassed => ("BOOKING_WINDOW_PASSED", "Đã qua thời gian nhận xe; không thể duyệt."),
+                BookingDecisionOutcome.StateConflict => ("BOOKING_STATE_CONFLICT", "Đơn đặt xe đã có quyết định hoặc đã chuyển sang bước khác."),
+                BookingDecisionOutcome.ConcurrentChange => ("BOOKING_DECISION_RETRY", "Đơn đặt xe vừa thay đổi. Vui lòng thử lại."),
+                _ => throw new InvalidOperationException("Unknown booking decision outcome."),
+            };
+            return ServiceResult<BookingDecisionResponse>.Failure(code, message);
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.ExclusionViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("SCHEDULE_CONFLICT", "Xe vừa được giữ lịch cho một đơn đặt khác.");
+        }
+        catch (PostgresException exception) when (exception.SqlState is "40001" or "40P01" or "55P03" or "57014")
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_RETRY", "Dữ liệu đang được xử lý. Vui lòng thử lại.");
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.CheckViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_REJECTED", "Đơn đặt xe không đáp ứng điều kiện duyệt hoặc từ chối.");
+        }
+    }
+
     public ServiceResult<RentalWindowResponse> ValidateWindow(RentalWindowRequest request) =>
         ValidateWindowCore(request.RentalType, request.StartAt, request.EndAt);
 

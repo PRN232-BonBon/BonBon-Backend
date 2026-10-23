@@ -5,6 +5,8 @@ namespace BonBon.Business.Services.Interfaces;
 
 public interface IBookingService
 {
+    Task<ServiceResult<BookingDecisionResponse>> ApproveAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default);
+    Task<ServiceResult<BookingDecisionResponse>> RejectAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default);
     ServiceResult<RentalWindowResponse> ValidateWindow(RentalWindowRequest request);
     Task<ServiceResult<BookingQuoteResponse>> QuoteAsync(BookingQuoteRequest request, CancellationToken ct = default);
     Task<ServiceResult<bool>> IsAvailableAsync(Guid vehicleId, RentalWindowRequest request, CancellationToken ct = default);

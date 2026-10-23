@@ -45,6 +45,12 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      Payment__Enabled: ${PAYMENT_ENABLED:-false}
+      Payment__CheckoutMinutes: ${PAYMENT_CHECKOUT_MINUTES:-15}
+      VnPay__TmnCode: ${VNPAY_TMN_CODE:-}
+      VnPay__HashSecret: ${VNPAY_HASH_SECRET:-}
+      VnPay__ReturnUrl: ${VNPAY_RETURN_URL:-}
+      PaymentReturn__FrontendResultUrl: ${PAYMENT_FRONTEND_RESULT_URL:-}
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${POSTGRES_DB:-bonbon};Username=${POSTGRES_USER:-bonbon_app};Password=${POSTGRES_PASSWORD}
       Jwt__Key: ${JWT_KEY:?Set JWT_KEY in .env}

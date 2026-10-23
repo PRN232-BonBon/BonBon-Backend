@@ -5,7 +5,7 @@ using System.Data;
 
 namespace BonBon.DataAccess.Repositories.Implementations;
 
-public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
+public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepository
 {
     private readonly BonBonDbContext _db = db;
 
