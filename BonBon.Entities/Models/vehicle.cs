@@ -20,9 +20,15 @@ public partial class vehicle
 
     public string model { get; set; }
 
+    public short? production_year { get; set; }
+
+    public string body_type { get; set; }
+
     public short seats { get; set; }
 
     public string transmission { get; set; }
+
+    public string fuel_type { get; set; }
 
     public string pickup_address { get; set; }
 
@@ -36,6 +42,10 @@ public partial class vehicle
     /// </summary>
     public decimal day_price { get; set; }
 
+    public string description { get; set; }
+
+    public string[] features { get; set; } = Array.Empty<string>();
+
     public string status { get; set; }
 
     public virtual account_role account_role { get; set; }
@@ -44,7 +54,7 @@ public partial class vehicle
 
     public virtual ICollection<booking> bookings { get; set; } = new List<booking>();
 
-    public virtual vehicle_image vehicle_image { get; set; }
+    public virtual ICollection<vehicle_image> vehicle_images { get; set; } = new List<vehicle_image>();
 
     public virtual ICollection<vehicle_inspection> vehicle_inspections { get; set; } = new List<vehicle_inspection>();
 }

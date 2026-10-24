@@ -270,12 +270,19 @@ public partial class bonbonContext : DbContext
             entity.Property(e => e.brand)
                 .IsRequired()
                 .HasMaxLength(80);
+            entity.Property(e => e.body_type).HasMaxLength(30);
+            entity.Property(e => e.description);
             entity.Property(e => e.day_price)
                 .HasPrecision(18, 2)
                 .HasComment("VND per billable 24-hour period.");
             entity.Property(e => e.hour_price)
                 .HasPrecision(18, 2)
                 .HasComment("VND per hour for rentals from 4 to 8 hours.");
+            entity.Property(e => e.fuel_type).HasMaxLength(20);
+            entity.Property(e => e.features)
+                .IsRequired()
+                .HasColumnType("text[]")
+                .HasDefaultValueSql("'{}'::text[]");
             entity.Property(e => e.model)
                 .IsRequired()
                 .HasMaxLength(100);
@@ -317,8 +324,8 @@ public partial class bonbonContext : DbContext
             entity.Property(e => e.is_cover).HasDefaultValue(false);
             entity.Property(e => e.sort_order).HasDefaultValue(0);
 
-            entity.HasOne(d => d.vehicle).WithOne(p => p.vehicle_image)
-                .HasForeignKey<vehicle_image>(d => d.vehicle_id)
+            entity.HasOne(d => d.vehicle).WithMany(p => p.vehicle_images)
+                .HasForeignKey(d => d.vehicle_id)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("vehicle_image_vehicle_id_fkey");
         });
