@@ -12,7 +12,10 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
     public async Task<VehiclePricing?> GetVehiclePricingAsync(Guid vehicleId, CancellationToken ct = default)
     {
         const string sql = """
-            SELECT vehicle_id, hour_price, day_price, status
+            SELECT vehicle_id, hour_price, day_price, status,
+                   weekly_discount_enabled, weekly_discount_percent,
+                   mileage_limit_enabled, daily_mileage_limit_km,
+                   overage_fee_per_km, rental_terms
             FROM bonbon.vehicle
             WHERE vehicle_id = @vehicle_id
             """;
@@ -28,7 +31,13 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
                 reader.GetGuid(0),
                 reader.GetDecimal(1),
                 reader.GetDecimal(2),
-                reader.GetString(3));
+                reader.GetString(3),
+                reader.GetBoolean(4),
+                reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+                reader.GetBoolean(6),
+                reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                reader.IsDBNull(8) ? null : reader.GetDecimal(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9));
         }, ct);
     }
 
@@ -81,7 +90,9 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
     {
         const string sql = """
             SELECT booking_id, vehicle_id, billable_units, unit_price_snapshot,
-                   quoted_rental_amount, currency, status
+                   weekly_discount_percent_snapshot, discount_amount_snapshot,
+                   quoted_rental_amount, included_mileage_km_snapshot,
+                   overage_fee_per_km_snapshot, rental_terms_snapshot, currency, status
             FROM bonbon.create_booking(
                 @customer_account_id,
                 @vehicle_id,
@@ -109,8 +120,13 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
                 reader.GetInt32(2),
                 reader.GetDecimal(3),
                 reader.GetDecimal(4),
-                reader.GetString(5),
-                reader.GetString(6));
+                reader.GetDecimal(5),
+                reader.GetDecimal(6),
+                reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                reader.IsDBNull(8) ? null : reader.GetDecimal(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.GetString(10),
+                reader.GetString(11));
         }, ct);
     }
 

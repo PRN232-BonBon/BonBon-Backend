@@ -1,6 +1,7 @@
 using System.Text;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.Services.Interfaces;
+using BonBon.API.Services;
 using BonBon.DataAccess;
 using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
@@ -22,11 +23,14 @@ builder.Services.AddDbContext<BonBonDbContext>(options =>
 builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
+builder.Services.AddScoped<IVehicleRepository,      VehicleRepository>();
 
 // ─── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IVehicleService, VehicleService>();
+builder.Services.AddSingleton<VehicleImageProcessor>();
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"];

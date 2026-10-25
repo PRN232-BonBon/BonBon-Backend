@@ -1,13 +1,28 @@
 namespace BonBon.DataAccess.Repositories.Interfaces;
 
-public sealed record VehiclePricing(Guid VehicleId, decimal HourPrice, decimal DayPrice, string Status);
+public sealed record VehiclePricing(
+    Guid VehicleId,
+    decimal HourPrice,
+    decimal DayPrice,
+    string Status,
+    bool WeeklyDiscountEnabled,
+    decimal? WeeklyDiscountPercent,
+    bool MileageLimitEnabled,
+    int? DailyMileageLimitKm,
+    decimal? OverageFeePerKm,
+    string? RentalTerms);
 
 public sealed record CreatedBooking(
     Guid BookingId,
     Guid VehicleId,
     int BillableUnits,
     decimal UnitPrice,
+    decimal WeeklyDiscountPercent,
+    decimal DiscountAmount,
     decimal QuotedRentalAmount,
+    int? IncludedMileageKm,
+    decimal? OverageFeePerKm,
+    string? RentalTerms,
     string Currency,
     string Status);
 
