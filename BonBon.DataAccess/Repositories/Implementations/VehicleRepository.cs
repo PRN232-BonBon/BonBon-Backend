@@ -93,23 +93,6 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
                 await imageCommand.ExecuteNonQueryAsync(ct);
             }
 
-            var document = submission.RegistrationDocument;
-            await using (var documentCommand = new NpgsqlCommand("""
-                INSERT INTO bonbon.vehicle_document (
-                    vehicle_id, document_type, document_data, content_type, byte_length, width, height
-                ) VALUES (
-                    @vehicle_id, 'RegistrationCertificate', @document_data, 'image/webp', @byte_length, @width, @height
-                )
-                """, connection, transaction))
-            {
-                documentCommand.Parameters.AddWithValue("vehicle_id", vehicleId);
-                documentCommand.Parameters.AddWithValue("document_data", document.Data);
-                documentCommand.Parameters.AddWithValue("byte_length", document.Data.Length);
-                documentCommand.Parameters.AddWithValue("width", document.Width);
-                documentCommand.Parameters.AddWithValue("height", document.Height);
-                await documentCommand.ExecuteNonQueryAsync(ct);
-            }
-
             await transaction.CommitAsync(ct);
             return new RegisteredVehicle(vehicleId, "PendingApproval", submission.VehicleImages.Count);
         }

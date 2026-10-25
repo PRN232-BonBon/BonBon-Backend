@@ -17,11 +17,10 @@ public sealed class VehicleService(IVehicleRepository vehicleRepository) : IVehi
         Guid ownerAccountId,
         RegisterVehicleRequest request,
         IReadOnlyList<StoredImage> vehicleImages,
-        StoredImage registrationDocument,
         CancellationToken ct = default)
     {
-        if (vehicleImages.Count is < 3 or > 8)
-            return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_IMAGE_COUNT", "Vui lòng tải từ 3 đến 8 ảnh xe.");
+        if (vehicleImages.Count is < 1 or > 8)
+            return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe.");
         if (string.IsNullOrWhiteSpace(request.PlateNumber) || request.PlateNumber.Length > 30
             || string.IsNullOrWhiteSpace(request.Brand) || request.Brand.Length > 80
             || string.IsNullOrWhiteSpace(request.Model) || request.Model.Length > 100)
@@ -75,7 +74,7 @@ public sealed class VehicleService(IVehicleRepository vehicleRepository) : IVehi
         {
             var response = await _vehicleRepository.RegisterAsync(
                 ownerAccountId,
-                new VehicleRegistrationSubmission(normalized, vehicleImages, registrationDocument),
+                new VehicleRegistrationSubmission(normalized, vehicleImages),
                 ct);
             return ServiceResult<VehicleRegistrationResponse>.Success(
                 new VehicleRegistrationResponse(response.VehicleId, response.Status, response.ImageCount));

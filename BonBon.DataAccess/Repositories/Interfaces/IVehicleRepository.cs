@@ -25,8 +25,7 @@ public sealed record VehicleRegistrationData(
 
 public sealed record VehicleRegistrationSubmission(
     VehicleRegistrationData Vehicle,
-    IReadOnlyList<StoredImage> VehicleImages,
-    StoredImage RegistrationDocument);
+    IReadOnlyList<StoredImage> VehicleImages);
 
 public sealed record RegisteredVehicle(Guid VehicleId, string Status, int ImageCount);
 public sealed record OwnerVehicle(

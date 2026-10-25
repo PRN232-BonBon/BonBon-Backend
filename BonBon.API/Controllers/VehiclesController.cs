@@ -29,7 +29,6 @@ public sealed class VehiclesController(
     public async Task<IActionResult> Register(
         [FromForm] string metadata,
         [FromForm] List<IFormFile> vehicleImages,
-        [FromForm] IFormFile registrationDocument,
         CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId)) return Unauthorized();
@@ -44,21 +43,19 @@ public sealed class VehiclesController(
             return ProblemResult("INVALID_METADATA", "Thông tin đăng ký xe không đúng định dạng.");
         }
         if (request is null) return ProblemResult("INVALID_METADATA", "Thiếu thông tin đăng ký xe.");
-        if (vehicleImages.Count is < 3 or > 8)
-            return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng tải từ 3 đến 8 ảnh xe.");
+        if (vehicleImages.Count is < 1 or > 8)
+            return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe.");
 
         try
         {
             var images = new List<StoredImage>(vehicleImages.Count);
             foreach (var image in vehicleImages)
                 images.Add(await _imageProcessor.ProcessAsync(image, ct));
-            var document = await _imageProcessor.ProcessAsync(registrationDocument, ct);
 
             var result = await _vehicleService.RegisterAsync(
                 accountId,
                 request,
                 images,
-                document,
                 ct);
             if (!result.IsSuccess) return ProblemResult(result.ErrorCode!, result.ErrorMessage!);
             return Created($"/api/vehicles/{result.Data!.VehicleId}", result.Data);

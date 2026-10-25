@@ -10,7 +10,6 @@ public interface IVehicleService
         Guid ownerAccountId,
         RegisterVehicleRequest request,
         IReadOnlyList<StoredImage> vehicleImages,
-        StoredImage registrationDocument,
         CancellationToken ct = default);
 
     Task<ServiceResult<IReadOnlyList<OwnerVehicleResponse>>> GetMineAsync(Guid ownerAccountId, CancellationToken ct = default);
