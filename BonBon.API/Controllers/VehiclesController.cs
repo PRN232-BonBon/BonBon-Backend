@@ -21,6 +21,22 @@ public sealed class VehiclesController(
     private readonly IVehicleRepository _vehicleRepository = vehicleRepository;
     private readonly VehicleImageProcessor _imageProcessor = imageProcessor;
 
+    [HttpGet]
+    [AllowAnonymous]
+    public async Task<IActionResult> Catalog([FromServices] IAdminRepository catalog, CancellationToken ct)
+    {
+        var vehicles = await catalog.GetVehiclesAsync(true, ct);
+        return Ok(vehicles.Select(v => new
+        {
+            v.Id, v.Brand, v.Model, v.Year, v.BodyType, v.Seats, v.Transmission, v.Fuel,
+            v.PickupAddress, v.Description, v.Features, v.DayPrice, v.HourPrice, v.ImageUrls,
+            ImageUrl = v.ImageUrls.FirstOrDefault(),
+            v.WeeklyDiscountEnabled, v.WeeklyDiscountPercent, v.MileageLimitEnabled,
+            v.DailyMileageLimitKm, v.OverageFeePerKm, v.RentalTerms,
+            Rating = 0, CompletedTrips = 0, DepositFree = false, DeliveryAvailable = false, InstantBook = false,
+        }));
+    }
+
     [HttpPost("registrations")]
     [Authorize]
     [Consumes("multipart/form-data")]

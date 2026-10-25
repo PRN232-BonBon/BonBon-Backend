@@ -15,6 +15,35 @@ env:
   IMAGE_NAME: prn232-bonbon/bonbon-backend
 
 jobs:
+  build-admin:
+    name: Build admin portal
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out frontend source
+        uses: actions/checkout@v6
+        with:
+          repository: PRN232-BonBon/BonBon-Frontend
+          ref: main
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build independent admin entry
+        env:
+          VITE_API_URL: /api
+        run: |
+          npm ci
+          npm run build:admin
+      - name: Upload admin build
+        uses: actions/upload-artifact@v4
+        with:
+          name: bonbon-admin
+          path: dist-admin/
+          retention-days: 7
+
   build-and-push:
     name: Build and publish image
     runs-on: ubuntu-latest
@@ -50,7 +79,7 @@ jobs:
 
   deploy:
     name: Deploy production API
-    needs: build-and-push
+    needs: [build-and-push, build-admin]
     runs-on:
       - self-hosted
       - Linux
@@ -67,6 +96,22 @@ jobs:
     steps:
       - name: Check out deployment files
         uses: actions/checkout@v6
+
+      - name: Download admin portal
+        uses: actions/download-artifact@v4
+        with:
+          name: bonbon-admin
+          path: admin-build
+
+      - name: Publish admin portal files
+        shell: bash
+        env:
+          ADMIN_PORTAL_PATH: ${{ vars.ADMIN_PORTAL_PATH || '/opt/bonbon/admin' }}
+        run: |
+          mkdir -p "$ADMIN_PORTAL_PATH/assets"
+          cp -a admin-build/assets/. "$ADMIN_PORTAL_PATH/assets/"
+          install -m 644 admin-build/admin.html "$ADMIN_PORTAL_PATH/admin.html.next"
+          mv "$ADMIN_PORTAL_PATH/admin.html.next" "$ADMIN_PORTAL_PATH/admin.html"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
