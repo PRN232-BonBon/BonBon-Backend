@@ -10,4 +10,9 @@ public interface IBookingService
     Task<ServiceResult<bool>> IsAvailableAsync(Guid vehicleId, RentalWindowRequest request, CancellationToken ct = default);
     Task<ServiceResult<BookingResponse>> CreateAsync(Guid customerAccountId, CreateBookingRequest request, CancellationToken ct = default);
     Task<ServiceResult<IReadOnlyList<CustomerBookingResponse>>> GetMineAsync(Guid customerAccountId, CancellationToken ct = default);
+    Task<ServiceResult<BookingDetailResponse>> GetDetailAsync(Guid bookingId, Guid currentAccountId, bool isAdmin = false, CancellationToken ct = default);
+    Task<ServiceResult<IReadOnlyList<OwnerBookingResponse>>> GetOwnerBookingsAsync(Guid ownerAccountId, CancellationToken ct = default);
+    Task<ServiceResult> CancelAsync(Guid bookingId, Guid customerAccountId, CancellationToken ct = default);
+    Task<ServiceResult> ApproveAsync(Guid bookingId, Guid ownerAccountId, CancellationToken ct = default);
+    Task<ServiceResult> RejectAsync(Guid bookingId, Guid ownerAccountId, CancellationToken ct = default);
 }

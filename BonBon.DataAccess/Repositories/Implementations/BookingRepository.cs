@@ -136,20 +136,20 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
     {
         const string sql = """
             SELECT b.booking_id, v.brand, v.model, v.plate_number,
-                   cover.image_url, b.rental_type, b.start_at, b.end_at,
-                   b.quoted_rental_amount, b.currency, b.status, b.created_at
-            FROM bonbon.booking b
-            JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
-            LEFT JOIN LATERAL (
-                SELECT vi.image_url
-                FROM bonbon.vehicle_image vi
-                WHERE vi.vehicle_id = v.vehicle_id
-                ORDER BY vi.is_cover DESC, vi.sort_order ASC
-                LIMIT 1
-            ) cover ON TRUE
-            WHERE b.customer_account_id = @customer_account_id
-            ORDER BY b.start_at DESC
-            """;
+               cover.image_url, b.rental_type, b.start_at, b.end_at,
+               b.quoted_rental_amount, b.currency, b.status, b.created_at
+        FROM bonbon.booking b
+        JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
+        LEFT JOIN LATERAL (
+            SELECT vi.image_url
+            FROM bonbon.vehicle_image vi
+            WHERE vi.vehicle_id = v.vehicle_id
+            ORDER BY vi.is_cover DESC, vi.sort_order ASC
+            LIMIT 1
+        ) cover ON TRUE
+        WHERE b.customer_account_id = @customer_account_id
+        ORDER BY b.start_at DESC
+        """;
 
         return await WithConnectionAsync(async connection =>
         {
@@ -167,6 +167,172 @@ public sealed class BookingRepository(BonBonDbContext db) : IBookingRepository
                     reader.GetFieldValue<DateTimeOffset>(11)));
             }
             return items;
+        }, ct);
+    }
+
+    public async Task<BookingDetailRecord?> GetByIdAsync(Guid bookingId, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT b.booking_id, b.status, b.rental_type, b.start_at, b.end_at, b.billable_units,
+                   b.unit_price_snapshot, b.weekly_discount_percent_snapshot, b.discount_amount_snapshot,
+                   b.quoted_rental_amount, b.included_mileage_km_snapshot, b.overage_fee_per_km_snapshot,
+                   b.rental_terms_snapshot, b.currency, b.created_at,
+                   v.vehicle_id, v.brand, v.model, v.plate_number, cover.image_url,
+                   v.pickup_address, v.seats, v.transmission, v.fuel_type,
+                   cust.account_id, cust.full_name, cust.email, cust.phone,
+                   own.account_id, own.full_name, own.email, own.phone
+            FROM bonbon.booking b
+            JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
+            JOIN bonbon.account cust ON cust.account_id = b.customer_account_id
+            JOIN bonbon.account own ON own.account_id = v.owner_account_id
+            LEFT JOIN LATERAL (
+                SELECT vi.image_url
+                FROM bonbon.vehicle_image vi
+                WHERE vi.vehicle_id = v.vehicle_id
+                ORDER BY vi.is_cover DESC, vi.sort_order ASC
+                LIMIT 1
+            ) cover ON TRUE
+            WHERE b.booking_id = @booking_id
+            """;
+
+        return await WithConnectionAsync(async connection =>
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("booking_id", bookingId);
+            await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, ct);
+            if (!await reader.ReadAsync(ct)) return null;
+
+            return new BookingDetailRecord(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetFieldValue<DateTimeOffset>(3),
+                reader.GetFieldValue<DateTimeOffset>(4),
+                reader.GetInt32(5),
+                reader.GetDecimal(6),
+                reader.GetDecimal(7),
+                reader.GetDecimal(8),
+                reader.GetDecimal(9),
+                reader.IsDBNull(10) ? null : reader.GetInt32(10),
+                reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.GetString(13),
+                reader.GetFieldValue<DateTimeOffset>(14),
+                reader.GetGuid(15),
+                reader.GetString(16),
+                reader.GetString(17),
+                reader.GetString(18),
+                reader.IsDBNull(19) ? null : reader.GetString(19),
+                reader.GetString(20),
+                reader.GetInt16(21),
+                reader.GetString(22),
+                reader.GetString(23),
+                reader.GetGuid(24),
+                reader.GetString(25),
+                reader.GetString(26),
+                reader.IsDBNull(27) ? null : reader.GetString(27),
+                reader.GetGuid(28),
+                reader.GetString(29),
+                reader.GetString(30),
+                reader.IsDBNull(31) ? null : reader.GetString(31));
+        }, ct);
+    }
+
+    public async Task<IReadOnlyList<OwnerBookingRecord>> GetByOwnerAsync(
+        Guid ownerAccountId,
+        CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT b.booking_id, v.vehicle_id, v.brand, v.model, v.plate_number,
+                   cover.image_url, cust.full_name, cust.phone,
+                   b.rental_type, b.start_at, b.end_at, b.quoted_rental_amount,
+                   b.currency, b.status, b.created_at
+            FROM bonbon.booking b
+            JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
+            JOIN bonbon.account cust ON cust.account_id = b.customer_account_id
+            LEFT JOIN LATERAL (
+                SELECT vi.image_url
+                FROM bonbon.vehicle_image vi
+                WHERE vi.vehicle_id = v.vehicle_id
+                ORDER BY vi.is_cover DESC, vi.sort_order ASC
+                LIMIT 1
+            ) cover ON TRUE
+            WHERE v.owner_account_id = @owner_account_id
+            ORDER BY b.created_at DESC
+            """;
+
+        return await WithConnectionAsync(async connection =>
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("owner_account_id", ownerAccountId);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var items = new List<OwnerBookingRecord>();
+            while (await reader.ReadAsync(ct))
+            {
+                items.Add(new OwnerBookingRecord(
+                    reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
+                    reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.GetString(8), reader.GetFieldValue<DateTimeOffset>(9),
+                    reader.GetFieldValue<DateTimeOffset>(10), reader.GetDecimal(11),
+                    reader.GetString(12), reader.GetString(13),
+                    reader.GetFieldValue<DateTimeOffset>(14)));
+            }
+            return items;
+        }, ct);
+    }
+
+    public async Task<bool> CancelAsync(Guid bookingId, CancellationToken ct = default)
+    {
+        const string sql = """
+            UPDATE bonbon.booking
+            SET status = 'Cancelled'
+            WHERE booking_id = @booking_id
+              AND status IN ('PendingApproval', 'AwaitingPayment')
+            """;
+
+        return await WithConnectionAsync(async connection =>
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("booking_id", bookingId);
+            var affected = await command.ExecuteNonQueryAsync(ct);
+            return affected > 0;
+        }, ct);
+    }
+
+    public async Task<bool> ApproveAsync(Guid bookingId, CancellationToken ct = default)
+    {
+        const string sql = """
+            UPDATE bonbon.booking
+            SET status = 'AwaitingPayment'
+            WHERE booking_id = @booking_id
+              AND status = 'PendingApproval'
+            """;
+
+        return await WithConnectionAsync(async connection =>
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("booking_id", bookingId);
+            var affected = await command.ExecuteNonQueryAsync(ct);
+            return affected > 0;
+        }, ct);
+    }
+
+    public async Task<bool> RejectAsync(Guid bookingId, CancellationToken ct = default)
+    {
+        const string sql = """
+            UPDATE bonbon.booking
+            SET status = 'Rejected'
+            WHERE booking_id = @booking_id
+              AND status = 'PendingApproval'
+            """;
+
+        return await WithConnectionAsync(async connection =>
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("booking_id", bookingId);
+            var affected = await command.ExecuteNonQueryAsync(ct);
+            return affected > 0;
         }, ct);
     }
 

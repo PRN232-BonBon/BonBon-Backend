@@ -157,6 +157,157 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         return ServiceResult<IReadOnlyList<CustomerBookingResponse>>.Success(response);
     }
 
+    public async Task<ServiceResult<BookingDetailResponse>> GetDetailAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin = false,
+        CancellationToken ct = default)
+    {
+        var item = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (item is null)
+            return ServiceResult<BookingDetailResponse>.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && item.CustomerAccountId != currentAccountId && item.OwnerAccountId != currentAccountId)
+            return ServiceResult<BookingDetailResponse>.Failure("FORBIDDEN", "Bạn không có quyền xem thông tin đơn đặt xe này.");
+
+        var response = new BookingDetailResponse(
+            item.BookingId,
+            item.Status,
+            item.RentalType,
+            item.StartAt,
+            item.EndAt,
+            item.BillableUnits,
+            item.UnitPrice,
+            item.UnitPrice * item.BillableUnits,
+            item.WeeklyDiscountPercent,
+            item.DiscountAmount,
+            item.QuotedRentalAmount,
+            item.IncludedMileageKm,
+            item.OverageFeePerKm,
+            item.RentalTerms,
+            item.Currency,
+            item.CreatedAt,
+            new BookingVehicleInfo(
+                item.VehicleId,
+                item.Brand,
+                item.Model,
+                item.PlateNumber,
+                item.CoverImageUrl,
+                item.PickupAddress,
+                item.Seats,
+                item.Transmission,
+                item.FuelType),
+            new BookingCustomerInfo(
+                item.CustomerAccountId,
+                item.CustomerName,
+                item.CustomerEmail,
+                item.CustomerPhone),
+            new BookingOwnerInfo(
+                item.OwnerAccountId,
+                item.OwnerName,
+                item.OwnerEmail,
+                item.OwnerPhone));
+
+        return ServiceResult<BookingDetailResponse>.Success(response);
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<OwnerBookingResponse>>> GetOwnerBookingsAsync(
+        Guid ownerAccountId,
+        CancellationToken ct = default)
+    {
+        var bookings = await _bookingRepository.GetByOwnerAsync(ownerAccountId, ct);
+        IReadOnlyList<OwnerBookingResponse> response = bookings.Select(item => new OwnerBookingResponse(
+            item.BookingId,
+            item.VehicleId,
+            $"{item.Brand} {item.Model}",
+            item.PlateNumber,
+            item.CoverImageUrl,
+            item.CustomerName,
+            item.CustomerPhone,
+            item.RentalType,
+            item.StartAt,
+            item.EndAt,
+            item.QuotedRentalAmount,
+            item.Currency,
+            item.Status,
+            item.CreatedAt)).ToList();
+
+        return ServiceResult<IReadOnlyList<OwnerBookingResponse>>.Success(response);
+    }
+
+    public async Task<ServiceResult> CancelAsync(
+        Guid bookingId,
+        Guid customerAccountId,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (booking.CustomerAccountId != customerAccountId)
+            return ServiceResult.Failure("FORBIDDEN", "Chỉ khách hàng tạo đơn mới có quyền hủy đơn đặt xe này.");
+
+        if (booking.Status != "PendingApproval" && booking.Status != "AwaitingPayment")
+            return ServiceResult.Failure("INVALID_STATUS", "Chỉ có thể hủy đơn khi đang chờ duyệt hoặc chờ thanh toán.");
+
+        var success = await _bookingRepository.CancelAsync(bookingId, ct);
+        if (!success)
+            return ServiceResult.Failure("CANCEL_FAILED", "Không thể hủy đơn đặt xe lúc này. Vui lòng thử lại.");
+
+        return ServiceResult.Success();
+    }
+
+    public async Task<ServiceResult> ApproveAsync(
+        Guid bookingId,
+        Guid ownerAccountId,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (booking.OwnerAccountId != ownerAccountId)
+            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền duyệt đơn đặt xe này.");
+
+        if (booking.Status != "PendingApproval")
+            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
+
+        try
+        {
+            var success = await _bookingRepository.ApproveAsync(bookingId, ct);
+            if (!success)
+                return ServiceResult.Failure("APPROVE_FAILED", "Không thể duyệt đơn đặt xe lúc này.");
+
+            return ServiceResult.Success();
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ExclusionViolation)
+        {
+            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch được xác nhận trong khoảng thời gian này.");
+        }
+    }
+
+    public async Task<ServiceResult> RejectAsync(
+        Guid bookingId,
+        Guid ownerAccountId,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (booking.OwnerAccountId != ownerAccountId)
+            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền từ chối đơn đặt xe này.");
+
+        if (booking.Status != "PendingApproval")
+            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
+
+        var success = await _bookingRepository.RejectAsync(bookingId, ct);
+        if (!success)
+            return ServiceResult.Failure("REJECT_FAILED", "Không thể từ chối đơn đặt xe lúc này.");
+
+        return ServiceResult.Success();
+    }
+
     private static ServiceResult<RentalWindowResponse> ValidateWindowCore(
         string rentalType,
         DateTimeOffset startAt,

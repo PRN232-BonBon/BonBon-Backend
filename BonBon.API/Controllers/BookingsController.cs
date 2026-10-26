@@ -26,6 +26,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     [HttpPost("quote")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(BookingQuoteResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Quote([FromBody] BookingQuoteRequest request, CancellationToken ct)
     {
         var result = await _bookingService.QuoteAsync(request, ct);
@@ -34,6 +35,8 @@ public sealed class BookingsController(IBookingService bookingService) : Control
 
     [HttpGet("availability")]
     [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Availability(
         [FromQuery] Guid vehicleId,
         [FromQuery] string rentalType,
@@ -53,10 +56,10 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     [HttpPost]
     [Authorize]
     [ProducesResponseType(typeof(BookingResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] CreateBookingRequest request, CancellationToken ct)
     {
-        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
 
         var result = await _bookingService.CreateAsync(accountId, request, ct);
         if (!result.IsSuccess) return BookingProblem(result.ErrorCode!, result.ErrorMessage!);
@@ -69,17 +72,105 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     [ProducesResponseType(typeof(IReadOnlyList<CustomerBookingResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Mine(CancellationToken ct)
     {
-        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
         var result = await _bookingService.GetMineAsync(accountId, ct);
         return Ok(result.Data);
     }
 
-    private BadRequestObjectResult BookingProblem(string code, string detail) =>
-        BadRequest(new ProblemDetails
+    [HttpGet("owner")]
+    [Authorize]
+    [ProducesResponseType(typeof(IReadOnlyList<OwnerBookingResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> OwnerBookings(CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var result = await _bookingService.GetOwnerBookingsAsync(accountId, ct);
+        return Ok(result.Data);
+    }
+
+    [HttpGet("{id:guid}")]
+    [Authorize]
+    [ProducesResponseType(typeof(BookingDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetById([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.GetDetailAsync(id, accountId, isAdmin, ct);
+        return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/cancel")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Cancel([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var result = await _bookingService.CancelAsync(id, accountId, ct);
+        return result.IsSuccess
+            ? Ok(new { message = "Đã hủy đơn đặt xe thành công." })
+            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/approve")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Approve([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var result = await _bookingService.ApproveAsync(id, accountId, ct);
+        return result.IsSuccess
+            ? Ok(new { message = "Đã duyệt đơn đặt xe thành công. Chờ khách hàng thanh toán." })
+            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Reject([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var result = await _bookingService.RejectAsync(id, accountId, ct);
+        return result.IsSuccess
+            ? Ok(new { message = "Đã từ chối đơn đặt xe thành công." })
+            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    private bool TryGetAccountId(out Guid accountId)
+    {
+        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(claim, out accountId);
+    }
+
+    private ObjectResult BookingProblem(string code, string detail)
+    {
+        var statusCode = code switch
+        {
+            "BOOKING_NOT_FOUND" => StatusCodes.Status404NotFound,
+            "FORBIDDEN" => StatusCodes.Status403Forbidden,
+            _ => StatusCodes.Status400BadRequest,
+        };
+
+        return StatusCode(statusCode, new ProblemDetails
         {
             Title = code,
             Detail = detail,
-            Status = StatusCodes.Status400BadRequest,
+            Status = statusCode,
         });
+    }
 }
