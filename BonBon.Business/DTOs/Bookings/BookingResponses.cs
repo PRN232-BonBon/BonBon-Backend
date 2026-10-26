@@ -14,7 +14,13 @@ public sealed record BookingQuoteResponse(
     DateTimeOffset EndAt,
     int BillableUnits,
     decimal UnitPrice,
+    decimal BaseRentalAmount,
+    decimal WeeklyDiscountPercent,
+    decimal DiscountAmount,
     decimal QuotedRentalAmount,
+    int? IncludedMileageKm,
+    decimal? OverageFeePerKm,
+    string? RentalTerms,
     string Currency,
     bool IsAvailable);
 
@@ -26,7 +32,13 @@ public sealed record BookingResponse(
     DateTimeOffset EndAt,
     int BillableUnits,
     decimal UnitPrice,
+    decimal BaseRentalAmount,
+    decimal WeeklyDiscountPercent,
+    decimal DiscountAmount,
     decimal QuotedRentalAmount,
+    int? IncludedMileageKm,
+    decimal? OverageFeePerKm,
+    string? RentalTerms,
     string Currency,
     string Status);
 

@@ -33,6 +33,16 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
 
         var normalized = window.Data!;
         var unitPrice = normalized.RentalType == "Hourly" ? vehicle.HourPrice : vehicle.DayPrice;
+        var baseRentalAmount = unitPrice * normalized.BillableUnits;
+        var discountPercent = normalized.RentalType == "Daily"
+            && normalized.BillableUnits >= 7
+            && vehicle.WeeklyDiscountEnabled
+            ? vehicle.WeeklyDiscountPercent ?? 0
+            : 0;
+        var discountAmount = decimal.Round(baseRentalAmount * discountPercent / 100, 0, MidpointRounding.AwayFromZero);
+        var includedMileageKm = vehicle.MileageLimitEnabled
+            ? vehicle.DailyMileageLimitKm * (normalized.RentalType == "Daily" ? normalized.BillableUnits : 1)
+            : null;
         var available = await _bookingRepository.IsVehicleAvailableAsync(
             request.VehicleId, normalized.StartAt, normalized.EndAt, ct);
 
@@ -43,7 +53,13 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             normalized.EndAt,
             normalized.BillableUnits,
             unitPrice,
-            unitPrice * normalized.BillableUnits,
+            baseRentalAmount,
+            discountPercent,
+            discountAmount,
+            baseRentalAmount - discountAmount,
+            includedMileageKm,
+            vehicle.MileageLimitEnabled ? vehicle.OverageFeePerKm : null,
+            vehicle.RentalTerms,
             "VND",
             available));
     }
@@ -101,7 +117,13 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
                 quote.Data.EndAt,
                 created.BillableUnits,
                 created.UnitPrice,
+                created.UnitPrice * created.BillableUnits,
+                created.WeeklyDiscountPercent,
+                created.DiscountAmount,
                 created.QuotedRentalAmount,
+                created.IncludedMileageKm,
+                created.OverageFeePerKm,
+                created.RentalTerms,
                 created.Currency,
                 created.Status));
         }

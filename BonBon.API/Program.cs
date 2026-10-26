@@ -3,6 +3,7 @@ using BonBon.API.Hubs;
 using BonBon.API.Services;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.Services.Interfaces;
+using BonBon.API.Services;
 using BonBon.DataAccess;
 using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
@@ -11,6 +12,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Microsoft.Extensions.FileProviders;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,6 +28,8 @@ builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
 builder.Services.AddScoped<ITrackingRepository,     TrackingRepository>();
+builder.Services.AddScoped<IVehicleRepository,      VehicleRepository>();
+builder.Services.AddScoped<IAdminRepository,        AdminRepository>();
 
 // ─── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IJwtService,  JwtService>();
@@ -34,6 +39,8 @@ builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddHttpClient("Traccar", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddSignalR();
 builder.Services.AddHostedService<TraccarTrackingWorker>();
+builder.Services.AddScoped<IVehicleService, VehicleService>();
+builder.Services.AddSingleton<VehicleImageProcessor>();
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"];
@@ -71,6 +78,13 @@ builder.Services.AddAuthentication(options =>
 });
 
 builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("admin-login", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 var allowedOrigins = builder.Configuration
@@ -138,6 +152,28 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
+// The existing reverse proxy routes both domains to this service.
+// Serve the independent admin build only on its configured hostname.
+var adminRoot = builder.Configuration["AdminPortal:Path"] ?? Path.Combine(app.Environment.ContentRootPath, "admin");
+var adminHost = builder.Configuration["AdminPortal:Host"] ?? "bonbon-admin.kitsuracloud.com";
+if (Directory.Exists(adminRoot))
+{
+    app.MapWhen(context => context.Request.Host.Host.Equals(adminHost, StringComparison.OrdinalIgnoreCase)
+        && !context.Request.Path.StartsWithSegments("/api") && context.Request.Path != "/health", portal =>
+    {
+        portal.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(adminRoot) });
+        portal.Run(async context =>
+        {
+            if (!HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method))
+            { context.Response.StatusCode = 405; return; }
+            if (Path.HasExtension(context.Request.Path)) { context.Response.StatusCode = 404; return; }
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.SendFileAsync(Path.Combine(adminRoot, "admin.html"));
+        });
+    });
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -147,6 +183,7 @@ if (app.Environment.IsDevelopment())
 app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new
 {
