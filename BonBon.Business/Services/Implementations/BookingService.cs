@@ -30,6 +30,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             return ServiceResult<BookingQuoteResponse>.Failure("VEHICLE_NOT_FOUND", "Không tìm thấy xe.");
         if (vehicle.Status != "Available")
             return ServiceResult<BookingQuoteResponse>.Failure("VEHICLE_UNAVAILABLE", "Xe hiện chưa sẵn sàng để đặt.");
+        if (!vehicle.IsOwnerActive)
+            return ServiceResult<BookingQuoteResponse>.Failure("OWNER_INACTIVE", "Chủ xe hiện chưa sẵn sàng cho thuê.");
 
         var normalized = window.Data!;
         var unitPrice = normalized.RentalType == "Hourly" ? vehicle.HourPrice : vehicle.DayPrice;
@@ -98,6 +100,24 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             return ServiceResult<BookingResponse>.Failure(quote.ErrorCode!, quote.ErrorMessage!);
         if (!quote.Data!.IsAvailable)
             return ServiceResult<BookingResponse>.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này.");
+
+        var vehicle = await _bookingRepository.GetVehiclePricingAsync(request.VehicleId, ct);
+        if (vehicle is null)
+            return ServiceResult<BookingResponse>.Failure("VEHICLE_NOT_FOUND", "Không tìm thấy xe.");
+        if (vehicle.Status != "Available")
+            return ServiceResult<BookingResponse>.Failure("VEHICLE_UNAVAILABLE", "Xe hiện chưa sẵn sàng để đặt.");
+        if (!vehicle.IsOwnerActive)
+            return ServiceResult<BookingResponse>.Failure("OWNER_INACTIVE", "Chủ xe hiện không còn hoạt động.");
+
+        // BE-01: Chặn tự thuê xe của mình
+        if (vehicle.OwnerAccountId == customerAccountId)
+            return ServiceResult<BookingResponse>.Failure("SELF_RENTAL_NOT_ALLOWED", "Bạn không thể tự thuê xe của chính mình.");
+
+        // BE-01: Chống tạo đơn trùng khi gửi lại request
+        var isDuplicate = await _bookingRepository.HasDuplicatePendingBookingAsync(
+            customerAccountId, request.VehicleId, quote.Data.StartAt, quote.Data.EndAt, ct);
+        if (isDuplicate)
+            return ServiceResult<BookingResponse>.Failure("DUPLICATE_BOOKING", "Bạn đã có một yêu cầu đặt xe đang chờ xử lý cho xe và khoảng thời gian này.");
 
         try
         {
@@ -170,6 +190,12 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         if (!isAdmin && item.CustomerAccountId != currentAccountId && item.OwnerAccountId != currentAccountId)
             return ServiceResult<BookingDetailResponse>.Failure("FORBIDDEN", "Bạn không có quyền xem thông tin đơn đặt xe này.");
 
+        var inspections = item.Inspections.Select(i => new InspectionResponse(
+            i.InspectionId, i.Kind, i.OdometerKm, i.FuelLevel, i.ConditionNotes, i.InspectedAt)).ToList();
+
+        var charges = item.AdditionalCharges.Select(c => new AdditionalChargeResponse(
+            c.AdditionalChargeId, c.ReasonCode, c.Description, c.Amount, c.Currency, c.Status, c.ProposedAt)).ToList();
+
         var response = new BookingDetailResponse(
             item.BookingId,
             item.Status,
@@ -206,7 +232,9 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
                 item.OwnerAccountId,
                 item.OwnerName,
                 item.OwnerEmail,
-                item.OwnerPhone));
+                item.OwnerPhone),
+            inspections,
+            charges);
 
         return ServiceResult<BookingDetailResponse>.Success(response);
     }
@@ -272,6 +300,20 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         if (booking.Status != "PendingApproval")
             return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
 
+        // BE-01: Kiểm tra thời gian không được trôi vào quá khứ
+        if (booking.StartAt < DateTimeOffset.UtcNow.AddMinutes(-2))
+            return ServiceResult.Failure("PAST_START_TIME", "Thời gian nhận xe đã trôi qua, không thể duyệt đơn.");
+
+        // BE-01: Kiểm tra lại trạng thái xe
+        var vehicle = await _bookingRepository.GetVehiclePricingAsync(booking.VehicleId, ct);
+        if (vehicle is null || vehicle.Status != "Available" || !vehicle.IsOwnerActive)
+            return ServiceResult.Failure("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt cho thuê.");
+
+        // BE-01: Kiểm tra lịch trống
+        var isAvailable = await _bookingRepository.IsVehicleAvailableAsync(booking.VehicleId, booking.StartAt, booking.EndAt, ct);
+        if (!isAvailable)
+            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này.");
+
         try
         {
             var success = await _bookingRepository.ApproveAsync(bookingId, ct);
@@ -308,6 +350,217 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         return ServiceResult.Success();
     }
 
+    public async Task<ServiceResult> ConfirmPaymentAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin = false,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
+            return ServiceResult.Failure("FORBIDDEN", "Bạn không có quyền xác nhận thanh toán cho đơn này.");
+
+        if (booking.Status != "AwaitingPayment")
+            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ thanh toán.");
+
+        var success = await _bookingRepository.ConfirmPaymentAsync(bookingId, ct);
+        if (!success)
+            return ServiceResult.Failure("CONFIRM_PAYMENT_FAILED", "Không thể xác nhận thanh toán lúc này.");
+
+        return ServiceResult.Success();
+    }
+
+    public async Task<ServiceResult<InspectionResponse>> ConfirmPickupAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin,
+        ConfirmPickupRequest request,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult<InspectionResponse>.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
+            return ServiceResult<InspectionResponse>.Failure("FORBIDDEN", "Bạn không có quyền thực hiện nhận xe cho đơn này.");
+
+        // BE-05: Kiểm tra thứ tự chuyển trạng thái — không nhận xe khi chưa thanh toán (Confirmed)
+        if (booking.Status is "PendingApproval" or "AwaitingPayment")
+            return ServiceResult<InspectionResponse>.Failure("PAYMENT_REQUIRED", "Không thể nhận xe khi chưa hoàn tất thanh toán / xác nhận.");
+
+        if (booking.Status is not ("Confirmed" or "ReadyForPickup"))
+            return ServiceResult<InspectionResponse>.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ nhận xe.");
+
+        if (request.OdometerKm < 0)
+            return ServiceResult<InspectionResponse>.Failure("INVALID_ODOMETER", "Số km ban đầu phải lớn hơn hoặc bằng 0.");
+
+        if (request.FuelLevel is < 0 or > 100)
+            return ServiceResult<InspectionResponse>.Failure("INVALID_FUEL_LEVEL", "Mức xăng phải từ 0% đến 100%.");
+
+        var inspection = await _bookingRepository.CreateInspectionAsync(
+            bookingId,
+            booking.VehicleId,
+            "Pickup",
+            request.OdometerKm,
+            request.FuelLevel,
+            request.ConditionNotes,
+            request.InspectedAt,
+            ct);
+
+        await _bookingRepository.UpdateStatusAsync(bookingId, "InProgress", ["Confirmed", "ReadyForPickup"], ct);
+
+        return ServiceResult<InspectionResponse>.Success(new InspectionResponse(
+            inspection.InspectionId,
+            inspection.Kind,
+            inspection.OdometerKm,
+            inspection.FuelLevel,
+            inspection.ConditionNotes,
+            inspection.InspectedAt));
+    }
+
+    public async Task<ServiceResult<ExcessMileageCalculationResponse>> ConfirmReturnAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin,
+        ConfirmReturnRequest request,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("FORBIDDEN", "Bạn không có quyền thực hiện trả xe cho đơn này.");
+
+        // BE-05: Chỉ trả xe khi InProgress
+        if (booking.Status != "InProgress")
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("INVALID_STATUS", "Chỉ có thể trả xe khi chuyến đi đang diễn ra (InProgress).");
+
+        var pickup = await _bookingRepository.GetInspectionAsync(bookingId, "Pickup", ct);
+        if (pickup is null)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("MISSING_PICKUP_INSPECTION", "Không tìm thấy biên bản nhận xe ban đầu.");
+
+        if (request.OdometerKm < (pickup.OdometerKm ?? 0))
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("INVALID_ODOMETER", "Số km lúc trả không được nhỏ hơn số km lúc nhận xe.");
+
+        if (request.FuelLevel is < 0 or > 100)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("INVALID_FUEL_LEVEL", "Mức xăng phải từ 0% đến 100%.");
+
+        var returnInspection = await _bookingRepository.CreateInspectionAsync(
+            bookingId,
+            booking.VehicleId,
+            "Return",
+            request.OdometerKm,
+            request.FuelLevel,
+            request.ConditionNotes,
+            request.InspectedAt,
+            ct);
+
+        // BE-06: Tính quãng đường thực tế và phí vượt km theo snapshot đã lưu lúc đặt
+        var actualDistance = request.OdometerKm - (pickup.OdometerKm ?? 0);
+        decimal excessKm = 0;
+        decimal excessFee = 0;
+        Guid? chargeId = null;
+
+        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
+        {
+            excessKm = actualDistance - booking.IncludedMileageKm.Value;
+            var feeRate = booking.OverageFeePerKm ?? 0;
+            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
+
+            if (excessFee > 0)
+            {
+                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
+                    bookingId, excessKm, feeRate, excessFee, ct);
+                chargeId = charge?.AdditionalChargeId;
+            }
+        }
+
+        await _bookingRepository.UpdateStatusAsync(bookingId, "Returned", ["InProgress"], ct);
+
+        return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
+            actualDistance,
+            booking.IncludedMileageKm,
+            excessKm,
+            booking.OverageFeePerKm,
+            excessFee,
+            chargeId));
+    }
+
+    public async Task<ServiceResult> CompleteBookingAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin = false,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
+            return ServiceResult.Failure("FORBIDDEN", "Bạn không có quyền hoàn thành đơn đặt xe này.");
+
+        // BE-05: Không hoàn thành khi chưa trả xe
+        if (booking.Status is not ("Returned" or "AwaitingSettlement"))
+            return ServiceResult.Failure("INVALID_STATUS", "Không thể hoàn thành chuyến đi khi xe chưa được trả.");
+
+        var success = await _bookingRepository.UpdateStatusAsync(bookingId, "Completed", ["Returned", "AwaitingSettlement"], ct);
+        if (!success)
+            return ServiceResult.Failure("COMPLETE_FAILED", "Không thể hoàn thành chuyến đi lúc này.");
+
+        return ServiceResult.Success();
+    }
+
+    public async Task<ServiceResult<ExcessMileageCalculationResponse>> CalculateExcessMileageAsync(
+        Guid bookingId,
+        Guid currentAccountId,
+        bool isAdmin = false,
+        CancellationToken ct = default)
+    {
+        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
+        if (booking is null)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
+
+        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("FORBIDDEN", "Bạn không có quyền truy cập thông tin phí của đơn này.");
+
+        var pickup = await _bookingRepository.GetInspectionAsync(bookingId, "Pickup", ct);
+        var returnIns = await _bookingRepository.GetInspectionAsync(bookingId, "Return", ct);
+
+        if (pickup is null || returnIns is null)
+            return ServiceResult<ExcessMileageCalculationResponse>.Failure("INSPECTIONS_INCOMPLETE", "Chưa đủ biên bản nhận và trả xe để tính phí.");
+
+        var actualDistance = (returnIns.OdometerKm ?? 0) - (pickup.OdometerKm ?? 0);
+        decimal excessKm = 0;
+        decimal excessFee = 0;
+        Guid? chargeId = null;
+
+        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
+        {
+            excessKm = actualDistance - booking.IncludedMileageKm.Value;
+            var feeRate = booking.OverageFeePerKm ?? 0;
+            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
+
+            if (excessFee > 0)
+            {
+                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
+                    bookingId, excessKm, feeRate, excessFee, ct);
+                chargeId = charge?.AdditionalChargeId;
+            }
+        }
+
+        return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
+            actualDistance,
+            booking.IncludedMileageKm,
+            excessKm,
+            booking.OverageFeePerKm,
+            excessFee,
+            chargeId));
+    }
+
     private static ServiceResult<RentalWindowResponse> ValidateWindowCore(
         string rentalType,
         DateTimeOffset startAt,
@@ -324,6 +577,10 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             return ServiceResult<RentalWindowResponse>.Failure("INVALID_RENTAL_TYPE", "Loại hình thuê không hợp lệ.");
         if (startAt == default || endAt == default || endAt <= startAt)
             return ServiceResult<RentalWindowResponse>.Failure("INVALID_INTERVAL", "Thời gian trả xe phải sau thời gian nhận xe.");
+
+        // BE-01: Chặn đặt trong quá khứ (cho phép 2 phút buffer cho độ lệch đồng hồ máy khách)
+        if (startAt < DateTimeOffset.UtcNow.AddMinutes(-2))
+            return ServiceResult<RentalWindowResponse>.Failure("PAST_START_TIME", "Thời gian nhận xe không được ở trong quá khứ.");
 
         var duration = endAt - startAt;
         int units;

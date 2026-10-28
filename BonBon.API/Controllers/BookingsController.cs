@@ -151,6 +151,85 @@ public sealed class BookingsController(IBookingService bookingService) : Control
             : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 
+    [HttpPost("{id:guid}/confirm-payment")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ConfirmPayment([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.ConfirmPaymentAsync(id, accountId, isAdmin, ct);
+        return result.IsSuccess
+            ? Ok(new { message = "Xác nhận thanh toán thành công. Đơn đặt xe đã sẵn sàng nhận xe." })
+            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/pickup")]
+    [Authorize]
+    [ProducesResponseType(typeof(InspectionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ConfirmPickup([FromRoute] Guid id, [FromBody] ConfirmPickupRequest request, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.ConfirmPickupAsync(id, accountId, isAdmin, request, ct);
+        return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/return")]
+    [Authorize]
+    [ProducesResponseType(typeof(ExcessMileageCalculationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ConfirmReturn([FromRoute] Guid id, [FromBody] ConfirmReturnRequest request, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.ConfirmReturnAsync(id, accountId, isAdmin, request, ct);
+        return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpPost("{id:guid}/complete")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Complete([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.CompleteBookingAsync(id, accountId, isAdmin, ct);
+        return result.IsSuccess
+            ? Ok(new { message = "Chuyến đi đã hoàn thành thành công." })
+            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
+    [HttpGet("{id:guid}/excess-mileage")]
+    [Authorize]
+    [ProducesResponseType(typeof(ExcessMileageCalculationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetExcessMileage([FromRoute] Guid id, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+
+        var isAdmin = User.IsInRole("Admin");
+        var result = await _bookingService.CalculateExcessMileageAsync(id, accountId, isAdmin, ct);
+        return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
+    }
+
     private bool TryGetAccountId(out Guid accountId)
     {
         var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);

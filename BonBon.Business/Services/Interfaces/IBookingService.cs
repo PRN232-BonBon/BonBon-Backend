@@ -15,4 +15,9 @@ public interface IBookingService
     Task<ServiceResult> CancelAsync(Guid bookingId, Guid customerAccountId, CancellationToken ct = default);
     Task<ServiceResult> ApproveAsync(Guid bookingId, Guid ownerAccountId, CancellationToken ct = default);
     Task<ServiceResult> RejectAsync(Guid bookingId, Guid ownerAccountId, CancellationToken ct = default);
+    Task<ServiceResult> ConfirmPaymentAsync(Guid bookingId, Guid currentAccountId, bool isAdmin = false, CancellationToken ct = default);
+    Task<ServiceResult<InspectionResponse>> ConfirmPickupAsync(Guid bookingId, Guid currentAccountId, bool isAdmin, ConfirmPickupRequest request, CancellationToken ct = default);
+    Task<ServiceResult<ExcessMileageCalculationResponse>> ConfirmReturnAsync(Guid bookingId, Guid currentAccountId, bool isAdmin, ConfirmReturnRequest request, CancellationToken ct = default);
+    Task<ServiceResult> CompleteBookingAsync(Guid bookingId, Guid currentAccountId, bool isAdmin = false, CancellationToken ct = default);
+    Task<ServiceResult<ExcessMileageCalculationResponse>> CalculateExcessMileageAsync(Guid bookingId, Guid currentAccountId, bool isAdmin = false, CancellationToken ct = default);
 }

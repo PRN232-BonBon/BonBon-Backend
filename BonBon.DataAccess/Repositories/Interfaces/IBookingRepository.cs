@@ -2,6 +2,8 @@ namespace BonBon.DataAccess.Repositories.Interfaces;
 
 public sealed record VehiclePricing(
     Guid VehicleId,
+    Guid OwnerAccountId,
+    bool IsOwnerActive,
     decimal HourPrice,
     decimal DayPrice,
     string Status,
@@ -40,6 +42,26 @@ public sealed record CustomerBooking(
     string Status,
     DateTimeOffset CreatedAt);
 
+public sealed record InspectionRecord(
+    Guid InspectionId,
+    Guid BookingId,
+    Guid VehicleId,
+    string Kind,
+    decimal? OdometerKm,
+    decimal? FuelLevel,
+    string? ConditionNotes,
+    DateTimeOffset InspectedAt);
+
+public sealed record AdditionalChargeRecord(
+    Guid AdditionalChargeId,
+    Guid BookingId,
+    string ReasonCode,
+    string Description,
+    decimal Amount,
+    string Currency,
+    string Status,
+    DateTimeOffset ProposedAt);
+
 public sealed record BookingDetailRecord(
     Guid BookingId,
     string Status,
@@ -75,7 +97,10 @@ public sealed record BookingDetailRecord(
     Guid OwnerAccountId,
     string OwnerName,
     string OwnerEmail,
-    string? OwnerPhone);
+    string? OwnerPhone,
+    // Inspections & Charges
+    IReadOnlyList<InspectionRecord> Inspections,
+    IReadOnlyList<AdditionalChargeRecord> AdditionalCharges);
 
 public sealed record OwnerBookingRecord(
     Guid BookingId,
@@ -98,6 +123,7 @@ public interface IBookingRepository
 {
     Task<VehiclePricing?> GetVehiclePricingAsync(Guid vehicleId, CancellationToken ct = default);
     Task<bool> IsVehicleAvailableAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
+    Task<bool> HasDuplicatePendingBookingAsync(Guid customerAccountId, Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
     Task<CreatedBooking> CreateAsync(
         Guid customerAccountId,
         Guid vehicleId,
@@ -111,4 +137,28 @@ public interface IBookingRepository
     Task<bool> CancelAsync(Guid bookingId, CancellationToken ct = default);
     Task<bool> ApproveAsync(Guid bookingId, CancellationToken ct = default);
     Task<bool> RejectAsync(Guid bookingId, CancellationToken ct = default);
+    Task<bool> ConfirmPaymentAsync(Guid bookingId, CancellationToken ct = default);
+    Task<InspectionRecord?> GetInspectionAsync(Guid bookingId, string kind, CancellationToken ct = default);
+    Task<IReadOnlyList<InspectionRecord>> GetInspectionsByBookingAsync(Guid bookingId, CancellationToken ct = default);
+    Task<IReadOnlyList<AdditionalChargeRecord>> GetChargesByBookingAsync(Guid bookingId, CancellationToken ct = default);
+    Task<InspectionRecord> CreateInspectionAsync(
+        Guid bookingId,
+        Guid vehicleId,
+        string kind,
+        decimal? odometerKm,
+        decimal? fuelLevel,
+        string? notes,
+        DateTimeOffset? inspectedAt,
+        CancellationToken ct = default);
+    Task<AdditionalChargeRecord?> SaveExcessMileageChargeAsync(
+        Guid bookingId,
+        decimal excessKm,
+        decimal feePerKm,
+        decimal amount,
+        CancellationToken ct = default);
+    Task<bool> UpdateStatusAsync(
+        Guid bookingId,
+        string newStatus,
+        string[] allowedCurrentStatuses,
+        CancellationToken ct = default);
 }

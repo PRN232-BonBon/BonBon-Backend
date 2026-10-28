@@ -78,6 +78,31 @@ public sealed record BookingOwnerInfo(
     string Email,
     string? Phone);
 
+public sealed record InspectionResponse(
+    Guid InspectionId,
+    string Kind,
+    decimal? OdometerKm,
+    decimal? FuelLevel,
+    string? ConditionNotes,
+    DateTimeOffset InspectedAt);
+
+public sealed record AdditionalChargeResponse(
+    Guid AdditionalChargeId,
+    string ReasonCode,
+    string Description,
+    decimal Amount,
+    string Currency,
+    string Status,
+    DateTimeOffset ProposedAt);
+
+public sealed record ExcessMileageCalculationResponse(
+    decimal ActualDistanceKm,
+    int? IncludedMileageKm,
+    decimal ExcessKm,
+    decimal? OverageFeePerKm,
+    decimal ExcessFeeAmount,
+    Guid? ChargeId);
+
 public sealed record BookingDetailResponse(
     Guid BookingId,
     string Status,
@@ -97,7 +122,9 @@ public sealed record BookingDetailResponse(
     DateTimeOffset CreatedAt,
     BookingVehicleInfo Vehicle,
     BookingCustomerInfo Customer,
-    BookingOwnerInfo Owner);
+    BookingOwnerInfo Owner,
+    IReadOnlyList<InspectionResponse> Inspections,
+    IReadOnlyList<AdditionalChargeResponse> AdditionalCharges);
 
 public sealed record OwnerBookingResponse(
     Guid BookingId,
