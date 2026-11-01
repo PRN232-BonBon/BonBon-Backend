@@ -14,8 +14,8 @@ public sealed class TrackingHub(ITrackingService trackingService) : Hub
     {
         var claim = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!Guid.TryParse(claim, out var accountId)
-            || !await _trackingService.CanAccessBookingAsync(accountId, bookingId, Context.ConnectionAborted))
-            throw new HubException("Bạn không có quyền xem hành trình booking này.");
+            || !await _trackingService.CanJoinTrackingAsync(accountId, bookingId, Context.ConnectionAborted))
+            throw new HubException("Tracking chưa mở hoặc bạn không có quyền xem hành trình booking này.");
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(bookingId), Context.ConnectionAborted);
     }
 

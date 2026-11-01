@@ -14,7 +14,8 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
         {
             const string sql = """
                 SELECT b.booking_id, b.customer_account_id, v.owner_account_id, v.traccar_device_id,
-                       b.status, b.pickup_meeting_latitude, b.pickup_meeting_longitude,
+                       b.status, b.start_at, b.end_at,
+                       b.pickup_meeting_latitude, b.pickup_meeting_longitude,
                        b.return_meeting_latitude, b.return_meeting_longitude
                 FROM bonbon.booking b
                 JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
@@ -24,16 +25,26 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
             command.Parameters.AddWithValue("booking_id", bookingId);
             await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, ct);
             if (!await reader.ReadAsync(ct)) return null;
-            return new TrackingBooking(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                reader.IsDBNull(3) ? null : reader.GetInt64(3), reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7), reader.IsDBNull(8) ? null : reader.GetDecimal(8));
+            return new TrackingBooking(
+                reader.GetGuid(0),
+                reader.GetGuid(1),
+                reader.GetGuid(2),
+                reader.IsDBNull(3) ? null : reader.GetInt64(3),
+                reader.GetString(4),
+                reader.GetFieldValue<DateTimeOffset>(5),
+                reader.GetFieldValue<DateTimeOffset>(6),
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7),
+                reader.IsDBNull(8) ? null : reader.GetDecimal(8),
+                reader.IsDBNull(9) ? null : reader.GetDecimal(9),
+                reader.IsDBNull(10) ? null : reader.GetDecimal(10));
         }, ct);
 
     public Task<bool> SetMeetingPointsAsync(Guid bookingId, Guid ownerAccountId, decimal pickupLatitude,
         decimal pickupLongitude, decimal returnLatitude, decimal returnLongitude, CancellationToken ct = default) =>
         WithConnectionAsync(async connection =>
         {
+            // Tracking mở 30 phút trước giờ nhận xe; sau đó điểm hẹn bị khoá.
+            // Ngoại lệ duy nhất: lần thiết lập đầu tiên khi điểm hẹn còn thiếu.
             const string sql = """
                 UPDATE bonbon.booking b SET
                     pickup_meeting_latitude = @pickup_latitude,
@@ -44,6 +55,10 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
                 WHERE b.booking_id = @booking_id AND b.vehicle_id = v.vehicle_id
                   AND v.owner_account_id = @owner_account_id
                   AND b.status IN ('Confirmed', 'ReadyForPickup')
+                  AND (
+                      now() < b.start_at - interval '30 minutes'
+                      OR b.pickup_meeting_latitude IS NULL
+                      OR b.return_meeting_latitude IS NULL)
                 """;
             await using var command = new NpgsqlCommand(sql, connection);
             command.Parameters.AddWithValue("booking_id", bookingId);
@@ -74,23 +89,35 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
     public Task<IReadOnlyList<TrackedBookingTarget>> GetTargetsForDeviceAsync(long deviceId, CancellationToken ct = default) =>
         WithConnectionAsync<IReadOnlyList<TrackedBookingTarget>>(async connection =>
         {
+            // Chỉ nhận GPS của booking sắp tới giờ nhận xe hoặc đang trong chuyến.
             const string sql = """
-                SELECT b.booking_id, b.customer_account_id, v.owner_account_id, b.status,
-                       CASE WHEN b.status = 'ReadyForPickup' THEN b.pickup_meeting_latitude ELSE b.return_meeting_latitude END,
-                       CASE WHEN b.status = 'ReadyForPickup' THEN b.pickup_meeting_longitude ELSE b.return_meeting_longitude END
+                SELECT b.booking_id, b.status, b.start_at, b.end_at,
+                       b.pickup_meeting_latitude, b.pickup_meeting_longitude,
+                       b.return_meeting_latitude, b.return_meeting_longitude
                 FROM bonbon.booking b
                 JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
                 WHERE v.traccar_device_id = @device_id
-                  AND ((b.status = 'ReadyForPickup' AND b.pickup_meeting_latitude IS NOT NULL)
-                    OR (b.status = 'InProgress' AND b.return_meeting_latitude IS NOT NULL))
+                  AND (
+                      (b.status IN ('Confirmed', 'ReadyForPickup')
+                          AND now() >= b.start_at - interval '30 minutes')
+                      OR b.status = 'InProgress')
                 """;
             await using var command = new NpgsqlCommand(sql, connection);
             command.Parameters.AddWithValue("device_id", deviceId);
             await using var reader = await command.ExecuteReaderAsync(ct);
             var targets = new List<TrackedBookingTarget>();
             while (await reader.ReadAsync(ct))
-                targets.Add(new TrackedBookingTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                    reader.GetString(3), reader.GetDecimal(4), reader.GetDecimal(5)));
+            {
+                targets.Add(new TrackedBookingTarget(
+                    reader.GetGuid(0),
+                    reader.GetString(1),
+                    reader.GetFieldValue<DateTimeOffset>(2),
+                    reader.GetFieldValue<DateTimeOffset>(3),
+                    reader.IsDBNull(4) ? null : reader.GetDecimal(4),
+                    reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+                    reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                    reader.IsDBNull(7) ? null : reader.GetDecimal(7)));
+            }
             return targets;
         }, ct);
 
