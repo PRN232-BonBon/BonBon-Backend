@@ -21,3 +21,42 @@ public abstract class RentalWindowRequestBase
 
     public DateTimeOffset EndAt { get; init; }
 }
+
+public sealed class ConfirmPaymentRequest
+{
+    [MaxLength(50)]
+    public string? Provider { get; init; } = "PlatformMock";
+
+    [MaxLength(200)]
+    public string? ProviderReference { get; init; }
+}
+
+public sealed class ConfirmPickupRequest
+{
+    [Required]
+    [Range(0, 100000000, ErrorMessage = "Số km không hợp lệ.")]
+    public decimal OdometerKm { get; init; }
+
+    [Range(0, 100, ErrorMessage = "Mức xăng phải từ 0% đến 100%.")]
+    public decimal? FuelLevel { get; init; }
+
+    [MaxLength(2000)]
+    public string? ConditionNotes { get; init; }
+
+    public DateTimeOffset? InspectedAt { get; init; }
+}
+
+public sealed class ConfirmReturnRequest
+{
+    [Required]
+    [Range(0, 100000000, ErrorMessage = "Số km không hợp lệ.")]
+    public decimal OdometerKm { get; init; }
+
+    [Range(0, 100, ErrorMessage = "Mức xăng phải từ 0% đến 100%.")]
+    public decimal? FuelLevel { get; init; }
+
+    [MaxLength(2000)]
+    public string? ConditionNotes { get; init; }
+
+    public DateTimeOffset? InspectedAt { get; init; }
+}

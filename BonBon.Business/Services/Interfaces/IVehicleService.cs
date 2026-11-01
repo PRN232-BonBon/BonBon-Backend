@@ -13,4 +13,6 @@ public interface IVehicleService
         CancellationToken ct = default);
 
     Task<ServiceResult<IReadOnlyList<OwnerVehicleResponse>>> GetMineAsync(Guid ownerAccountId, CancellationToken ct = default);
+
+    Task<ServiceResult<IReadOnlyList<VehicleCatalogItem>>> SearchAsync(VehicleSearchRequest request, CancellationToken ct = default);
 }

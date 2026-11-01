@@ -23,18 +23,14 @@ public sealed class VehiclesController(
 
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> Catalog([FromServices] IAdminRepository catalog, CancellationToken ct)
+    [ProducesResponseType(typeof(IReadOnlyList<VehicleCatalogItem>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Catalog(
+        [FromQuery] VehicleSearchRequest request,
+        CancellationToken ct)
     {
-        var vehicles = await catalog.GetVehiclesAsync(true, ct);
-        return Ok(vehicles.Select(v => new
-        {
-            v.Id, v.Brand, v.Model, v.Year, v.BodyType, v.Seats, v.Transmission, v.Fuel,
-            v.PickupAddress, v.Description, v.Features, v.DayPrice, v.HourPrice, v.ImageUrls,
-            ImageUrl = v.ImageUrls.FirstOrDefault(),
-            v.WeeklyDiscountEnabled, v.WeeklyDiscountPercent, v.MileageLimitEnabled,
-            v.DailyMileageLimitKm, v.OverageFeePerKm, v.RentalTerms,
-            Rating = 0, CompletedTrips = 0, DepositFree = false, DeliveryAvailable = false, InstantBook = false,
-        }));
+        var result = await _vehicleService.SearchAsync(request, ct);
+        return result.IsSuccess ? Ok(result.Data) : ProblemResult(result.ErrorCode!, result.ErrorMessage!);
     }
 
     [HttpPost("registrations")]
@@ -103,6 +99,6 @@ public sealed class VehiclesController(
     private bool TryGetAccountId(out Guid accountId) =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out accountId);
 
-    private BadRequestObjectResult ProblemResult(string code, string detail) =>
+    private ObjectResult ProblemResult(string code, string detail) =>
         BadRequest(new ProblemDetails { Title = code, Detail = detail, Status = StatusCodes.Status400BadRequest });
 }

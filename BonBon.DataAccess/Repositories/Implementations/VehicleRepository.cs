@@ -50,56 +50,53 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
                 """, connection, transaction))
             {
                 vehicleCommand.Parameters.AddWithValue("owner_account_id", ownerAccountId);
-                vehicleCommand.Parameters.AddWithValue("plate_number", request.PlateNumber.Trim().ToUpperInvariant());
-                vehicleCommand.Parameters.AddWithValue("brand", request.Brand.Trim());
-                vehicleCommand.Parameters.AddWithValue("model", request.Model.Trim());
+                vehicleCommand.Parameters.AddWithValue("plate_number", request.PlateNumber);
+                vehicleCommand.Parameters.AddWithValue("brand", request.Brand);
+                vehicleCommand.Parameters.AddWithValue("model", request.Model);
                 vehicleCommand.Parameters.AddWithValue("production_year", request.ProductionYear);
-                vehicleCommand.Parameters.AddWithValue("body_type", request.BodyType.Trim());
+                vehicleCommand.Parameters.AddWithValue("body_type", request.BodyType);
                 vehicleCommand.Parameters.AddWithValue("seats", request.Seats);
-                vehicleCommand.Parameters.AddWithValue("transmission", request.Transmission.Trim());
-                vehicleCommand.Parameters.AddWithValue("fuel_type", request.FuelType.Trim());
-                vehicleCommand.Parameters.AddWithValue("pickup_address", request.PickupAddress.Trim());
+                vehicleCommand.Parameters.AddWithValue("transmission", request.Transmission);
+                vehicleCommand.Parameters.AddWithValue("fuel_type", request.FuelType);
+                vehicleCommand.Parameters.AddWithValue("pickup_address", request.PickupAddress);
                 vehicleCommand.Parameters.AddWithValue("hour_price", request.HourPrice);
                 vehicleCommand.Parameters.AddWithValue("day_price", request.DayPrice);
-                vehicleCommand.Parameters.AddWithValue("description", request.Description.Trim());
-                vehicleCommand.Parameters.AddWithValue("features", request.Features.Distinct().Take(20).ToArray());
+                vehicleCommand.Parameters.AddWithValue("description", request.Description);
+                vehicleCommand.Parameters.AddWithValue("features", request.Features);
                 vehicleCommand.Parameters.AddWithValue("weekly_discount_enabled", request.WeeklyDiscountEnabled);
                 vehicleCommand.Parameters.AddWithValue("weekly_discount_percent", (object?)request.WeeklyDiscountPercent ?? DBNull.Value);
                 vehicleCommand.Parameters.AddWithValue("mileage_limit_enabled", request.MileageLimitEnabled);
                 vehicleCommand.Parameters.AddWithValue("daily_mileage_limit_km", (object?)request.DailyMileageLimitKm ?? DBNull.Value);
                 vehicleCommand.Parameters.AddWithValue("overage_fee_per_km", (object?)request.OverageFeePerKm ?? DBNull.Value);
-                vehicleCommand.Parameters.AddWithValue("rental_terms", string.IsNullOrWhiteSpace(request.RentalTerms) ? DBNull.Value : request.RentalTerms.Trim());
+                vehicleCommand.Parameters.AddWithValue("rental_terms", (object?)request.RentalTerms ?? DBNull.Value);
                 vehicleId = (Guid)(await vehicleCommand.ExecuteScalarAsync(ct)
-                    ?? throw new InvalidOperationException("Database did not return the vehicle id."));
+                    ?? throw new InvalidOperationException("Failed to register vehicle."));
             }
 
-            for (var index = 0; index < submission.VehicleImages.Count; index++)
+            for (var i = 0; i < submission.VehicleImages.Count; i++)
             {
-                var image = submission.VehicleImages[index];
+                var image = submission.VehicleImages[i];
                 await using var imageCommand = new NpgsqlCommand("""
                     INSERT INTO bonbon.vehicle_image (
-                        vehicle_id, image_data, content_type, byte_length, width, height, sort_order, is_cover
+                        vehicle_id, is_cover, sort_order, image_data, content_type,
+                        byte_length, width, height
                     ) VALUES (
-                        @vehicle_id, @image_data, 'image/webp', @byte_length, @width, @height, @sort_order, @is_cover
+                        @vehicle_id, @is_cover, @sort_order, @image_data, 'image/webp',
+                        @byte_length, @width, @height
                     )
                     """, connection, transaction);
                 imageCommand.Parameters.AddWithValue("vehicle_id", vehicleId);
+                imageCommand.Parameters.AddWithValue("is_cover", i == 0);
+                imageCommand.Parameters.AddWithValue("sort_order", (short)i);
                 imageCommand.Parameters.AddWithValue("image_data", image.Data);
                 imageCommand.Parameters.AddWithValue("byte_length", image.Data.Length);
                 imageCommand.Parameters.AddWithValue("width", image.Width);
                 imageCommand.Parameters.AddWithValue("height", image.Height);
-                imageCommand.Parameters.AddWithValue("sort_order", index);
-                imageCommand.Parameters.AddWithValue("is_cover", index == 0);
                 await imageCommand.ExecuteNonQueryAsync(ct);
             }
 
             await transaction.CommitAsync(ct);
             return new RegisteredVehicle(vehicleId, "PendingApproval", submission.VehicleImages.Count);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(ct);
-            throw;
         }
         finally
         {
@@ -154,6 +151,107 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
             command.Parameters.AddWithValue("image_id", imageId);
             await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, ct);
             return await reader.ReadAsync(ct) ? (reader.GetFieldValue<byte[]>(0), reader.GetString(1)) : null;
+        }
+        finally
+        {
+            if (shouldClose) await connection.CloseAsync();
+        }
+    }
+
+    public async Task<IReadOnlyList<VehicleCatalogRecord>> SearchAsync(VehicleSearchFilter filter, CancellationToken ct = default)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync(ct);
+
+        const string sql = """
+            SELECT v.vehicle_id, v.brand, v.model, v.production_year,
+                   v.plate_number, v.body_type, v.seats, v.transmission, v.fuel_type,
+                   v.pickup_address, v.description, v.features, v.hour_price, v.day_price, v.status,
+                   a.account_id, a.full_name, a.email, a.phone,
+                   ARRAY(
+                       SELECT COALESCE(vi.image_url, '/api/vehicles/images/' || vi.vehicle_image_id::text)
+                       FROM bonbon.vehicle_image vi
+                       WHERE vi.vehicle_id = v.vehicle_id
+                       ORDER BY vi.is_cover DESC, vi.sort_order, vi.vehicle_image_id
+                   ) AS image_urls,
+                   v.weekly_discount_enabled, v.weekly_discount_percent,
+                   v.mileage_limit_enabled, v.daily_mileage_limit_km,
+                   v.overage_fee_per_km, v.rental_terms
+            FROM bonbon.vehicle v
+            JOIN bonbon.account a ON a.account_id = v.owner_account_id
+            WHERE v.status = 'Available'
+              AND bonbon.has_active_role(v.owner_account_id, 3::smallint)
+              AND (@location IS NULL OR v.pickup_address ILIKE '%' || @location || '%')
+              AND (@seats IS NULL OR v.seats = @seats)
+              AND (@transmission IS NULL OR v.transmission = @transmission)
+              AND (@fuel_type IS NULL OR v.fuel_type = @fuel_type)
+              AND (@body_type IS NULL OR v.body_type = @body_type)
+              AND (@min_price IS NULL OR v.day_price >= @min_price)
+              AND (@max_price IS NULL OR v.day_price <= @max_price)
+              AND (@start_at IS NULL OR @end_at IS NULL OR (
+                  NOT EXISTS (
+                      SELECT 1 FROM bonbon.availability_block ab
+                      WHERE ab.vehicle_id = v.vehicle_id
+                        AND tstzrange(ab.start_at, ab.end_at, '[)') && tstzrange(@start_at, @end_at, '[)')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bonbon.booking b
+                      WHERE b.vehicle_id = v.vehicle_id
+                        AND b.status IN ('AwaitingPayment', 'Confirmed', 'ReadyForPickup',
+                            'InProgress', 'Returned', 'AwaitingSettlement', 'Completed')
+                        AND tstzrange(b.start_at, b.end_at, '[)') && tstzrange(@start_at, @end_at, '[)')
+                  )
+              ))
+            ORDER BY v.vehicle_id;
+            """;
+
+        try
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("location", (object?)filter.Location ?? DBNull.Value);
+            command.Parameters.AddWithValue("seats", (object?)filter.Seats ?? DBNull.Value);
+            command.Parameters.AddWithValue("transmission", (object?)filter.Transmission ?? DBNull.Value);
+            command.Parameters.AddWithValue("fuel_type", (object?)filter.FuelType ?? DBNull.Value);
+            command.Parameters.AddWithValue("body_type", (object?)filter.BodyType ?? DBNull.Value);
+            command.Parameters.AddWithValue("min_price", (object?)filter.MinPrice ?? DBNull.Value);
+            command.Parameters.AddWithValue("max_price", (object?)filter.MaxPrice ?? DBNull.Value);
+            command.Parameters.AddWithValue("start_at", filter.StartAt.HasValue ? filter.StartAt.Value.ToUniversalTime() : DBNull.Value);
+            command.Parameters.AddWithValue("end_at", filter.EndAt.HasValue ? filter.EndAt.Value.ToUniversalTime() : DBNull.Value);
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var results = new List<VehicleCatalogRecord>();
+            while (await reader.ReadAsync(ct))
+            {
+                results.Add(new VehicleCatalogRecord(
+                    reader.GetGuid(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt16(3),
+                    reader.GetString(4),
+                    reader.GetString(5),
+                    reader.GetInt16(6),
+                    reader.GetString(7),
+                    reader.GetString(8),
+                    reader.GetString(9),
+                    reader.IsDBNull(10) ? null : reader.GetString(10),
+                    reader.GetFieldValue<string[]>(11),
+                    reader.GetDecimal(12),
+                    reader.GetDecimal(13),
+                    reader.GetString(14),
+                    reader.GetGuid(15),
+                    reader.GetString(16),
+                    reader.GetString(17),
+                    reader.IsDBNull(18) ? null : reader.GetString(18),
+                    reader.GetFieldValue<string[]>(19),
+                    reader.GetBoolean(20),
+                    reader.IsDBNull(21) ? null : reader.GetDecimal(21),
+                    reader.GetBoolean(22),
+                    reader.IsDBNull(23) ? null : reader.GetInt32(23),
+                    reader.IsDBNull(24) ? null : reader.GetDecimal(24),
+                    reader.IsDBNull(25) ? null : reader.GetString(25)));
+            }
+            return results;
         }
         finally
         {

@@ -54,3 +54,90 @@ public sealed record CustomerBookingResponse(
     string Currency,
     string Status,
     DateTimeOffset CreatedAt);
+
+public sealed record BookingVehicleInfo(
+    Guid VehicleId,
+    string Brand,
+    string Model,
+    string PlateNumber,
+    string? CoverImageUrl,
+    string PickupAddress,
+    short Seats,
+    string Transmission,
+    string FuelType);
+
+public sealed record BookingCustomerInfo(
+    Guid CustomerId,
+    string FullName,
+    string Email,
+    string? Phone);
+
+public sealed record BookingOwnerInfo(
+    Guid OwnerId,
+    string FullName,
+    string Email,
+    string? Phone);
+
+public sealed record InspectionResponse(
+    Guid InspectionId,
+    string Kind,
+    decimal? OdometerKm,
+    decimal? FuelLevel,
+    string? ConditionNotes,
+    DateTimeOffset InspectedAt);
+
+public sealed record AdditionalChargeResponse(
+    Guid AdditionalChargeId,
+    string ReasonCode,
+    string Description,
+    decimal Amount,
+    string Currency,
+    string Status,
+    DateTimeOffset ProposedAt);
+
+public sealed record ExcessMileageCalculationResponse(
+    decimal ActualDistanceKm,
+    int? IncludedMileageKm,
+    decimal ExcessKm,
+    decimal? OverageFeePerKm,
+    decimal ExcessFeeAmount,
+    Guid? ChargeId);
+
+public sealed record BookingDetailResponse(
+    Guid BookingId,
+    string Status,
+    string RentalType,
+    DateTimeOffset StartAt,
+    DateTimeOffset EndAt,
+    int BillableUnits,
+    decimal UnitPrice,
+    decimal BaseRentalAmount,
+    decimal WeeklyDiscountPercent,
+    decimal DiscountAmount,
+    decimal QuotedRentalAmount,
+    int? IncludedMileageKm,
+    decimal? OverageFeePerKm,
+    string? RentalTerms,
+    string Currency,
+    DateTimeOffset CreatedAt,
+    BookingVehicleInfo Vehicle,
+    BookingCustomerInfo Customer,
+    BookingOwnerInfo Owner,
+    IReadOnlyList<InspectionResponse> Inspections,
+    IReadOnlyList<AdditionalChargeResponse> AdditionalCharges);
+
+public sealed record OwnerBookingResponse(
+    Guid BookingId,
+    Guid VehicleId,
+    string VehicleName,
+    string PlateNumber,
+    string? CoverImageUrl,
+    string CustomerName,
+    string? CustomerPhone,
+    string RentalType,
+    DateTimeOffset StartAt,
+    DateTimeOffset EndAt,
+    decimal TotalAmount,
+    string Currency,
+    string Status,
+    DateTimeOffset CreatedAt);
