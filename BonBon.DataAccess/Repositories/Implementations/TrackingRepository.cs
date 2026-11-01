@@ -13,9 +13,7 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
         WithConnectionAsync(async connection =>
         {
             const string sql = """
-                SELECT b.booking_id, b.customer_account_id, v.owner_account_id, v.traccar_device_id,
-                       b.status, b.start_at, b.end_at,
-                       b.pickup_meeting_latitude, b.pickup_meeting_longitude,
+                SELECT b.booking_id, b.customer_account_id, v.owner_account_id, b.status, b.end_at,
                        b.return_meeting_latitude, b.return_meeting_longitude
                 FROM bonbon.booking b
                 JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
@@ -29,22 +27,20 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
                 reader.GetGuid(0),
                 reader.GetGuid(1),
                 reader.GetGuid(2),
-                reader.IsDBNull(3) ? null : reader.GetInt64(3),
-                reader.GetString(4),
-                reader.GetFieldValue<DateTimeOffset>(5),
-                reader.GetFieldValue<DateTimeOffset>(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7),
-                reader.IsDBNull(8) ? null : reader.GetDecimal(8),
-                reader.IsDBNull(9) ? null : reader.GetDecimal(9),
-                reader.IsDBNull(10) ? null : reader.GetDecimal(10));
+                reader.GetString(3),
+                reader.GetFieldValue<DateTimeOffset>(4),
+                reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+                reader.IsDBNull(6) ? null : reader.GetDecimal(6));
         }, ct);
 
     public Task<bool> SetMeetingPointsAsync(Guid bookingId, Guid ownerAccountId, decimal pickupLatitude,
-        decimal pickupLongitude, decimal returnLatitude, decimal returnLongitude, CancellationToken ct = default) =>
+        decimal pickupLongitude, decimal returnLatitude, decimal returnLongitude,
+        IReadOnlyList<string> allowedStatuses, string activeStatus, CancellationToken ct = default) =>
         WithConnectionAsync(async connection =>
         {
-            // Tracking mở 30 phút trước giờ nhận xe; sau đó điểm hẹn bị khoá.
-            // Ngoại lệ duy nhất: lần thiết lập đầu tiên khi điểm hẹn còn thiếu.
+            // Điểm hẹn đổi được trước khi bắt đầu thuê; đang thuê thì chỉ được bù
+            // lần thiết lập đầu tiên khi điểm trả xe còn thiếu.
+            // Trạng thái hợp lệ do TrackingRules truyền vào, không viết cứng ở đây.
             const string sql = """
                 UPDATE bonbon.booking b SET
                     pickup_meeting_latitude = @pickup_latitude,
@@ -54,11 +50,8 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
                 FROM bonbon.vehicle v
                 WHERE b.booking_id = @booking_id AND b.vehicle_id = v.vehicle_id
                   AND v.owner_account_id = @owner_account_id
-                  AND b.status IN ('Confirmed', 'ReadyForPickup')
-                  AND (
-                      now() < b.start_at - interval '30 minutes'
-                      OR b.pickup_meeting_latitude IS NULL
-                      OR b.return_meeting_latitude IS NULL)
+                  AND b.status = ANY(@statuses)
+                  AND (b.status <> @active_status OR b.return_meeting_latitude IS NULL)
                 """;
             await using var command = new NpgsqlCommand(sql, connection);
             command.Parameters.AddWithValue("booking_id", bookingId);
@@ -67,68 +60,20 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
             command.Parameters.AddWithValue("pickup_longitude", pickupLongitude);
             command.Parameters.AddWithValue("return_latitude", returnLatitude);
             command.Parameters.AddWithValue("return_longitude", returnLongitude);
+            command.Parameters.AddWithValue("statuses", allowedStatuses.ToArray());
+            command.Parameters.AddWithValue("active_status", activeStatus);
             return await command.ExecuteNonQueryAsync(ct) == 1;
         }, ct);
 
-    public Task<bool> SetDeviceAsync(Guid bookingId, Guid ownerAccountId, long deviceId, CancellationToken ct = default) =>
-        WithConnectionAsync(async connection =>
-        {
-            const string sql = """
-                UPDATE bonbon.vehicle v SET traccar_device_id = @device_id
-                FROM bonbon.booking b
-                WHERE b.booking_id = @booking_id AND b.vehicle_id = v.vehicle_id
-                  AND v.owner_account_id = @owner_account_id
-                """;
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("booking_id", bookingId);
-            command.Parameters.AddWithValue("owner_account_id", ownerAccountId);
-            command.Parameters.AddWithValue("device_id", deviceId);
-            return await command.ExecuteNonQueryAsync(ct) == 1;
-        }, ct);
-
-    public Task<IReadOnlyList<TrackedBookingTarget>> GetTargetsForDeviceAsync(long deviceId, CancellationToken ct = default) =>
-        WithConnectionAsync<IReadOnlyList<TrackedBookingTarget>>(async connection =>
-        {
-            // Chỉ nhận GPS của booking sắp tới giờ nhận xe hoặc đang trong chuyến.
-            const string sql = """
-                SELECT b.booking_id, b.status, b.start_at, b.end_at,
-                       b.pickup_meeting_latitude, b.pickup_meeting_longitude,
-                       b.return_meeting_latitude, b.return_meeting_longitude
-                FROM bonbon.booking b
-                JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
-                WHERE v.traccar_device_id = @device_id
-                  AND (
-                      (b.status IN ('Confirmed', 'ReadyForPickup')
-                          AND now() >= b.start_at - interval '30 minutes')
-                      OR b.status = 'InProgress')
-                """;
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("device_id", deviceId);
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            var targets = new List<TrackedBookingTarget>();
-            while (await reader.ReadAsync(ct))
-            {
-                targets.Add(new TrackedBookingTarget(
-                    reader.GetGuid(0),
-                    reader.GetString(1),
-                    reader.GetFieldValue<DateTimeOffset>(2),
-                    reader.GetFieldValue<DateTimeOffset>(3),
-                    reader.IsDBNull(4) ? null : reader.GetDecimal(4),
-                    reader.IsDBNull(5) ? null : reader.GetDecimal(5),
-                    reader.IsDBNull(6) ? null : reader.GetDecimal(6),
-                    reader.IsDBNull(7) ? null : reader.GetDecimal(7)));
-            }
-            return targets;
-        }, ct);
-
-    public async Task SavePositionAsync(Guid bookingId, decimal latitude, decimal longitude, decimal? accuracyMeters,
-        DateTimeOffset recordedAt, CancellationToken ct = default)
+    public async Task SavePositionAsync(Guid bookingId, decimal latitude, decimal longitude,
+        decimal? accuracyMeters, DateTimeOffset recordedAt, string source, CancellationToken ct = default)
     {
         await WithConnectionAsync(async connection =>
         {
             const string sql = """
-                INSERT INTO bonbon.vehicle_location (booking_id, latitude, longitude, accuracy_meters, source, recorded_at)
-                VALUES (@booking_id, @latitude, @longitude, @accuracy, 'Traccar', @recorded_at)
+                INSERT INTO bonbon.vehicle_location
+                    (booking_id, latitude, longitude, accuracy_meters, source, recorded_at)
+                VALUES (@booking_id, @latitude, @longitude, @accuracy, @source, @recorded_at)
                 ON CONFLICT DO NOTHING
                 """;
             await using var command = new NpgsqlCommand(sql, connection);
@@ -136,6 +81,7 @@ public sealed class TrackingRepository(BonBonDbContext db) : ITrackingRepository
             command.Parameters.AddWithValue("latitude", latitude);
             command.Parameters.AddWithValue("longitude", longitude);
             command.Parameters.AddWithValue("accuracy", (object?)accuracyMeters ?? DBNull.Value);
+            command.Parameters.AddWithValue("source", source);
             command.Parameters.AddWithValue("recorded_at", recordedAt.ToUniversalTime());
             await command.ExecuteNonQueryAsync(ct);
             return true;

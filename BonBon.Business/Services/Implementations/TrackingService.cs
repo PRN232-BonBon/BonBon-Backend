@@ -1,7 +1,6 @@
 using BonBon.Business.Common;
 using BonBon.Business.DTOs.Tracking;
 using BonBon.Business.Services.Interfaces;
-using BonBon.Business.Tracking;
 using BonBon.DataAccess.Repositories.Interfaces;
 
 namespace BonBon.Business.Services.Implementations;
@@ -10,6 +9,10 @@ public sealed class TrackingService(ITrackingRepository repository) : ITrackingS
 {
     private const string BookingNotFoundMessage =
         "Không tìm thấy booking hoặc bạn không thuộc lượt thuê này.";
+
+    private const string OwnerOnlyMessage = "Chỉ chủ xe được theo dõi vị trí xe.";
+
+    private const string PositionSource = "Phone";
 
     private readonly ITrackingRepository _repository = repository;
 
@@ -20,118 +23,71 @@ public sealed class TrackingService(ITrackingRepository repository) : ITrackingS
         if (booking is null || booking.OwnerAccountId != accountId)
             return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy booking hoặc bạn không phải chủ xe.");
 
-        if (booking.Status is not ("Confirmed" or "ReadyForPickup"))
+        if (!TrackingRules.ConfigurableStatuses.Contains(booking.Status))
             return ServiceResult.Failure("MEETING_POINTS_LOCKED",
-                "Chỉ thiết lập điểm nhận/trả xe khi booking đã được xác nhận và chuyến chưa bắt đầu.");
+                "Chỉ thiết lập điểm trả xe khi booking đã được xác nhận và chưa kết thúc.");
 
-        var windowOpened = TrackingRules.IsWindowOpen(
-            TrackingRules.PickupStage, booking.StartAt, booking.EndAt, DateTimeOffset.UtcNow);
-        var alreadyConfigured = booking.PickupLatitude is not null && booking.ReturnLatitude is not null;
-        if (windowOpened && alreadyConfigured)
+        if (TrackingRules.IsActive(booking.Status) && booking.ReturnLatitude is not null)
             return ServiceResult.Failure("MEETING_POINTS_LOCKED",
-                "Tracking đã bắt đầu; điểm nhận/trả xe phải được thiết lập trước đó và không thể thay đổi.");
+                "Tracking đã bắt đầu; điểm trả xe không thể thay đổi.");
 
         var updated = await _repository.SetMeetingPointsAsync(bookingId, accountId,
             request.PickupLatitude, request.PickupLongitude,
-            request.ReturnLatitude, request.ReturnLongitude, ct);
+            request.ReturnLatitude, request.ReturnLongitude,
+            TrackingRules.ConfigurableStatuses, TrackingRules.LiveRentalStatus, ct);
         return updated
             ? ServiceResult.Success()
             : ServiceResult.Failure("MEETING_POINTS_LOCKED",
-                "Booking vừa thay đổi trạng thái hoặc tracking đã mở, vui lòng tải lại.");
-    }
-
-    public async Task<ServiceResult> SetDeviceAsync(Guid accountId, Guid bookingId, long deviceId,
-        CancellationToken ct = default)
-    {
-        if (deviceId <= 0)
-            return ServiceResult.Failure("INVALID_DEVICE_ID", "deviceId phải lớn hơn 0.");
-
-        var booking = await _repository.GetBookingAsync(bookingId, ct);
-        if (booking is null || booking.OwnerAccountId != accountId)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy booking hoặc bạn không phải chủ xe.");
-
-        var updated = await _repository.SetDeviceAsync(bookingId, accountId, deviceId, ct);
-        return updated
-            ? ServiceResult.Success()
-            : ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy booking.");
+                "Booking vừa thay đổi trạng thái, vui lòng tải lại.");
     }
 
     public async Task<ServiceResult<TrackingStatusResponse>> GetStatusAsync(Guid accountId, Guid bookingId,
         CancellationToken ct = default)
     {
-        var viewer = await ResolveViewerAsync(accountId, bookingId, ct);
-        if (viewer is null)
+        var booking = await _repository.GetBookingAsync(bookingId, ct);
+        if (booking is null)
             return ServiceResult<TrackingStatusResponse>.Failure("BOOKING_NOT_FOUND", BookingNotFoundMessage);
 
-        var booking = viewer.Value.Booking;
-        var stage = viewer.Value.Stage;
-        var now = DateTimeOffset.UtcNow;
-        var deadline = TrackingRules.GetRentalBoundary(stage, booking.StartAt, booking.EndAt);
-        var opensAt = TrackingRules.GetWindowOpensAt(stage, booking.StartAt, booking.EndAt);
-        var destination = TrackingRules.GetDestination(stage,
-            booking.PickupLatitude, booking.PickupLongitude,
-            booking.ReturnLatitude, booking.ReturnLongitude);
-        var meetingPointsConfigured = destination is not null;
-        var trackerConfigured = booking.DeviceId is not null;
-        var windowOpen = now >= opensAt;
+        if (TrackingRules.ResolveViewerRole(accountId, booking.OwnerAccountId) is null)
+            return ServiceResult<TrackingStatusResponse>.Failure("FORBIDDEN", OwnerOnlyMessage);
 
-        var state = !TrackingRules.SupportsStage(booking.Status, stage) ? TrackingStates.Inactive
-            : !meetingPointsConfigured ? TrackingStates.MeetingPointsMissing
-            : !trackerConfigured ? TrackingStates.TrackerMissing
-            : !windowOpen ? TrackingStates.WindowNotOpen
+        var destination = TrackingRules.GetDestination(booking.ReturnLatitude, booking.ReturnLongitude);
+        var state = !TrackingRules.IsActive(booking.Status) ? TrackingStates.Inactive
+            : destination is null ? TrackingStates.MeetingPointsMissing
             : TrackingStates.Ready;
-
-        var secondsUntilOpen = windowOpen
-            ? 0
-            : (int)Math.Ceiling((opensAt - now).TotalSeconds);
 
         return ServiceResult<TrackingStatusResponse>.Success(new TrackingStatusResponse(
             booking.BookingId,
-            viewer.Value.Role,
-            stage,
+            TrackingRules.OwnerViewer,
             state,
             state == TrackingStates.Ready,
-            opensAt,
-            deadline,
-            secondsUntilOpen,
-            meetingPointsConfigured,
-            trackerConfigured));
+            booking.EndAt,
+            destination is not null));
     }
 
     public async Task<ServiceResult<TrackingSnapshotResponse>> GetSnapshotAsync(Guid accountId, Guid bookingId,
         CancellationToken ct = default)
     {
-        var viewer = await ResolveViewerAsync(accountId, bookingId, ct);
-        if (viewer is null)
+        var booking = await _repository.GetBookingAsync(bookingId, ct);
+        if (booking is null)
             return ServiceResult<TrackingSnapshotResponse>.Failure("BOOKING_NOT_FOUND", BookingNotFoundMessage);
 
-        var booking = viewer.Value.Booking;
-        var stage = viewer.Value.Stage;
-        if (!TrackingRules.SupportsStage(booking.Status, stage))
-            return ServiceResult<TrackingSnapshotResponse>.Failure("TRACKING_NOT_ACTIVE",
-                "Chưa tới giai đoạn theo dõi của bạn: người thuê xem xe tới điểm nhận khi booking Confirmed/ReadyForPickup, chủ xe xem xe về điểm trả khi booking InProgress.");
+        if (TrackingRules.ResolveViewerRole(accountId, booking.OwnerAccountId) is null)
+            return ServiceResult<TrackingSnapshotResponse>.Failure("FORBIDDEN", OwnerOnlyMessage);
 
-        var destination = TrackingRules.GetDestination(stage,
-            booking.PickupLatitude, booking.PickupLongitude,
-            booking.ReturnLatitude, booking.ReturnLongitude);
+        if (!TrackingRules.IsActive(booking.Status))
+            return ServiceResult<TrackingSnapshotResponse>.Failure("TRACKING_NOT_ACTIVE",
+                "Tracking chỉ mở trong thời gian thuê: bật khi chủ xe bàn giao xe (InProgress) và tắt khi khách trả xe.");
+
+        var destination = TrackingRules.GetDestination(booking.ReturnLatitude, booking.ReturnLongitude);
         if (destination is null)
             return ServiceResult<TrackingSnapshotResponse>.Failure("MEETING_POINT_NOT_CONFIGURED",
-                "Chủ xe chưa thiết lập điểm nhận/trả xe. Điểm hẹn phải được thiết lập trước khi tracking mở.");
-
-        if (booking.DeviceId is null)
-            return ServiceResult<TrackingSnapshotResponse>.Failure("TRACKER_NOT_CONFIGURED",
-                "Xe chưa được gắn thiết bị Traccar.");
-
-        var opensAt = TrackingRules.GetWindowOpensAt(stage, booking.StartAt, booking.EndAt);
-        if (DateTimeOffset.UtcNow < opensAt)
-            return ServiceResult<TrackingSnapshotResponse>.Failure("TRACKING_WINDOW_NOT_OPEN",
-                $"Chỉ xem trực tiếp từ {TrackingRules.FormatVietnamTime(opensAt)} " +
-                $"({TrackingRules.LeadTimeMinutes} phút trước {TrackingRules.GetBoundaryLabel(stage)}).");
+                "Chủ xe chưa thiết lập điểm trả xe nên chưa tính được khoảng cách.");
 
         var position = await _repository.GetLatestPositionAsync(bookingId, ct);
         if (position is null)
             return ServiceResult<TrackingSnapshotResponse>.Failure("POSITION_NOT_AVAILABLE",
-                "Traccar chưa nhận được vị trí GPS mới.");
+                "Chưa nhận được vị trí GPS nào từ điện thoại của người thuê.");
 
         var distance = TrackingRules.DistanceMeters(
             position.Latitude, position.Longitude,
@@ -139,7 +95,6 @@ public sealed class TrackingService(ITrackingRepository repository) : ITrackingS
 
         return ServiceResult<TrackingSnapshotResponse>.Success(new TrackingSnapshotResponse(
             booking.BookingId,
-            stage,
             position.Latitude,
             position.Longitude,
             position.AccuracyMeters,
@@ -152,72 +107,52 @@ public sealed class TrackingService(ITrackingRepository repository) : ITrackingS
 
     public async Task<bool> CanJoinTrackingAsync(Guid accountId, Guid bookingId, CancellationToken ct = default)
     {
-        var viewer = await ResolveViewerAsync(accountId, bookingId, ct);
-        if (viewer is null) return false;
+        var booking = await _repository.GetBookingAsync(bookingId, ct);
+        if (booking is null) return false;
+        if (TrackingRules.ResolveViewerRole(accountId, booking.OwnerAccountId) is null) return false;
 
-        var booking = viewer.Value.Booking;
-        var stage = viewer.Value.Stage;
-        var destination = TrackingRules.GetDestination(stage,
-            booking.PickupLatitude, booking.PickupLongitude,
-            booking.ReturnLatitude, booking.ReturnLongitude);
-
-        return TrackingRules.SupportsStage(booking.Status, stage)
-            && destination is not null
-            && booking.DeviceId is not null
-            && TrackingRules.IsWindowOpen(stage, booking.StartAt, booking.EndAt, DateTimeOffset.UtcNow);
+        return TrackingRules.IsActive(booking.Status)
+            && TrackingRules.GetDestination(booking.ReturnLatitude, booking.ReturnLongitude) is not null;
     }
 
-    public async Task<IReadOnlyList<TrackingPositionUpdate>> ProcessPositionAsync(long deviceId, decimal latitude,
-        decimal longitude, decimal? accuracyMeters, DateTimeOffset recordedAt, CancellationToken ct = default)
-    {
-        var targets = await _repository.GetTargetsForDeviceAsync(deviceId, ct);
-        var now = DateTimeOffset.UtcNow;
-        var updates = new List<TrackingPositionUpdate>(targets.Count);
-
-        foreach (var target in targets)
-        {
-            await _repository.SavePositionAsync(target.BookingId, latitude, longitude, accuracyMeters, recordedAt, ct);
-
-            var stage = TrackingRules.GetCandidateStage(target.Status);
-            if (stage is null
-                || !TrackingRules.IsWindowOpen(stage, target.StartAt, target.EndAt, now)) continue;
-
-            var destination = TrackingRules.GetDestination(stage,
-                target.PickupLatitude, target.PickupLongitude,
-                target.ReturnLatitude, target.ReturnLongitude);
-            if (destination is null) continue;
-
-            var distance = TrackingRules.DistanceMeters(
-                latitude, longitude,
-                destination.Value.Latitude, destination.Value.Longitude);
-
-            updates.Add(new TrackingPositionUpdate(
-                target.BookingId,
-                stage,
-                latitude,
-                longitude,
-                accuracyMeters,
-                recordedAt,
-                destination.Value.Latitude,
-                destination.Value.Longitude,
-                distance,
-                TrackingRules.IsArrived(distance)));
-        }
-
-        return updates;
-    }
-
-    private async Task<TrackingViewer?> ResolveViewerAsync(Guid accountId, Guid bookingId, CancellationToken ct)
+    public async Task<ServiceResult<TrackingPositionUpdate?>> ReportPositionAsync(Guid accountId,
+        Guid bookingId, ReportTrackingPositionRequest request, CancellationToken ct = default)
     {
         var booking = await _repository.GetBookingAsync(bookingId, ct);
-        if (booking is null) return null;
+        if (booking is null)
+            return ServiceResult<TrackingPositionUpdate?>.Failure("BOOKING_NOT_FOUND", BookingNotFoundMessage);
 
-        var role = TrackingRules.ResolveViewerRole(
-            accountId, booking.CustomerAccountId, booking.OwnerAccountId);
-        if (role is null) return null;
+        if (accountId != booking.CustomerAccountId && accountId != booking.OwnerAccountId)
+            return ServiceResult<TrackingPositionUpdate?>.Failure("FORBIDDEN",
+                "Bạn không thuộc lượt thuê này nên không gửi được vị trí.");
 
-        return new TrackingViewer(booking, role, TrackingRules.GetViewerStage(role));
+        if (!TrackingRules.IsActive(booking.Status))
+            return ServiceResult<TrackingPositionUpdate?>.Failure("TRACKING_NOT_ACTIVE",
+                "Chỉ gửi vị trí khi chuyến đang diễn ra (InProgress).");
+
+        var now = DateTimeOffset.UtcNow;
+        var recordedAt = request.RecordedAt is { } value && value < now ? value : now;
+
+        await _repository.SavePositionAsync(bookingId, request.Latitude, request.Longitude,
+            request.AccuracyMeters, recordedAt, PositionSource, ct);
+
+        var destination = TrackingRules.GetDestination(booking.ReturnLatitude, booking.ReturnLongitude);
+        if (destination is null)
+            return ServiceResult<TrackingPositionUpdate?>.Success(null);
+
+        var distance = TrackingRules.DistanceMeters(
+            request.Latitude, request.Longitude,
+            destination.Value.Latitude, destination.Value.Longitude);
+
+        return ServiceResult<TrackingPositionUpdate?>.Success(new TrackingPositionUpdate(
+            booking.BookingId,
+            request.Latitude,
+            request.Longitude,
+            request.AccuracyMeters,
+            recordedAt,
+            destination.Value.Latitude,
+            destination.Value.Longitude,
+            distance,
+            TrackingRules.IsArrived(distance)));
     }
-
-    private readonly record struct TrackingViewer(TrackingBooking Booking, string Role, string Stage);
 }

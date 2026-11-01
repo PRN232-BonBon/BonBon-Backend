@@ -1,9 +1,7 @@
 using System.Text;
-using BonBon.API.Hubs;
-using BonBon.API.Services;
+using BonBon.API.Infrastructure;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.Services.Interfaces;
-using BonBon.API.Services;
 using BonBon.DataAccess;
 using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
@@ -36,9 +34,7 @@ builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
-builder.Services.AddHttpClient("Traccar", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddSignalR();
-builder.Services.AddHostedService<TraccarTrackingWorker>();
 builder.Services.AddScoped<IVehicleService, VehicleService>();
 builder.Services.AddSingleton<VehicleImageProcessor>();
 

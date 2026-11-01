@@ -1,7 +1,7 @@
 using BonBon.DataAccess.Repositories.Interfaces;
 using SkiaSharp;
 
-namespace BonBon.API.Services;
+namespace BonBon.API.Infrastructure;
 
 public sealed class VehicleImageProcessor
 {

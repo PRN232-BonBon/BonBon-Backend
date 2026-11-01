@@ -269,9 +269,6 @@ public partial class bonbonContext : DbContext
             entity.ToTable("vehicle", "bonbon");
 
             entity.HasIndex(e => e.owner_account_id, "ix_vehicle_owner");
-            entity.HasIndex(e => e.traccar_device_id, "uq_vehicle_traccar_device_id")
-                .IsUnique()
-                .HasFilter("traccar_device_id IS NOT NULL");
 
             entity.Property(e => e.vehicle_id).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.brand)

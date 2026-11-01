@@ -41,39 +41,30 @@ The SQL schema in `database/migrations/001_initial_schema.sql` is applied only w
 PostgreSQL initializes an empty `postgres_data` volume. Do not remove that volume on
 a running environment unless the database is intentionally being recreated.
 
-## Vehicle tracking with Traccar Client
+## Vehicle tracking from the renter's phone
 
-Traccar Client reports GPS coordinates to a Traccar Server. Configure the app with
-the public Traccar server URL and the device identifier, then set `TRACCAR_BASE_URL`
-and `TRACCAR_API_TOKEN` for the BonBon API. Apply
-`database/migrations/003_vehicle_tracking.sql` to an existing database once (fresh
-Compose databases also load it during initialization). The token is a Traccar API
-key and should be kept secret.
+Tracking does not use a hardware tracker. The renter's phone uploads its GPS
+position while the car is rented, and the owner watches it live.
 
 ### Tracking rules
 
-Tracking is a two-sided view of the same car and is bound to the rental window:
+- Tracking switches on automatically when the handover is confirmed:
+  `POST /api/bookings/{id}/pickup` moves the booking to `InProgress`, and
+  `TrackingRules.IsActive` treats exactly that status as "tracking on".
+- It switches off automatically as soon as the booking leaves `InProgress`
+  (`return`, `cancel` and so on), because positions are only accepted and only
+  published in that status.
+- Only the **owner** can read tracking data. The renter never sees a map; their
+  phone is the position source.
+- The return meeting point is the reference used for `distanceMeters` / `arrived`.
+  The owner must set it; it is locked once the rental starts, except for the first
+  setup when it is still missing.
 
-- The customer (renter) watches the car approach the **pickup** point, and only
-  from **30 minutes before `start_at`** while the booking is `Confirmed` or
-  `ReadyForPickup`.
-- The owner watches the car approach the **return** point, and only from
-  **30 minutes before `end_at`** while the booking is `InProgress`.
-- The pickup and return meeting points must be configured before that window
-  opens. Once tracking opens the coordinates are locked; the only late write
-  allowed is the first setup when a point is still missing.
+The rules live in `BonBon.Business/Common/TrackingRules.cs`.
 
-The rules live in `BonBon.Business/Tracking/TrackingRules.cs` (30-minute lead time,
-stage mapping, distance, 30 metre arrival radius) and are applied by
-`TrackingService`, the controller and the SignalR hub alike.
+### Endpoints
 
-### Setup endpoints (owner only)
-
-`PUT /api/bookings/{bookingId}/tracking/device` with `{"deviceId": 123}`. The ID is
-the Traccar Server device record ID; the identifier entered in Traccar Client is the
-device's `uniqueId` and must match the registered Traccar device.
-
-`PUT /api/bookings/{bookingId}/tracking/meeting-points` sets both meeting points:
+`PUT /api/bookings/{bookingId}/tracking/meeting-points` — owner only:
 
 ```json
 {
@@ -84,30 +75,43 @@ device's `uniqueId` and must match the registered Traccar device.
 }
 ```
 
-Both endpoints answer `204 No Content`, or `409 Conflict` when the booking is not
-`Confirmed`/`ReadyForPickup` or when tracking has already opened with the points
-configured.
+`409 Conflict` when the booking is not in a configurable status
+(`Confirmed`, `ReadyForPickup`, `InProgress`) or when the return point is already
+set while the rental is running.
 
-### Read endpoints
+`POST /api/bookings/{bookingId}/tracking/positions` — called by the renter's phone,
+only while the booking is `InProgress`:
 
-`GET /api/bookings/{bookingId}/tracking/status` returns the viewer's stage (`pickup`
-for the customer, `return` for the owner), whether tracking may be shown
-(`canTrack`), when it opens (`opensAt`, `deadline`, `secondsUntilOpen`) and what is
-still missing (`state`: `Ready`, `WindowNotOpen`, `MeetingPointsMissing`,
-`TrackerMissing`, `Inactive`). Clients use it to show a countdown instead of polling
-the snapshot.
+```json
+{
+  "latitude": 10.7787,
+  "longitude": 106.7001,
+  "accuracyMeters": 8,
+  "recordedAt": "2026-11-01T09:41:00+07:00"
+}
+```
 
-`GET /api/bookings/{bookingId}/tracking/snapshot` returns the latest coordinates,
-the destination, the straight-line `distanceMeters` and `arrived` (true within 30
-metres). It fails with `409 TRACKING_WINDOW_NOT_OPEN` before the window opens,
-`409 TRACKING_NOT_ACTIVE` for the wrong stage, `409 MEETING_POINT_NOT_CONFIGURED`,
-`409 TRACKER_NOT_CONFIGURED`, and `503 POSITION_NOT_AVAILABLE` when Traccar has not
-sent a fix yet.
+`recordedAt` is optional (server time is used, and future timestamps are clamped).
+Answers `204 No Content`. `409 TRACKING_NOT_ACTIVE` when the rental is not running.
 
-BonBon connects to Traccar's `/api/socket` WebSocket and stores every live fix in
-`vehicle_location`. `PositionUpdated` events are published on `/hubs/tracking` with
-SignalR only while a tracking window is open, and `JoinBooking(bookingId)` is
-rejected outside the window, so clients receive new positions without polling. The
-GPS update interval still depends on the Traccar Client's device and location
-settings. For browser clients, connect to SignalR with the BonBon JWT as its access
-token, join the booking, then fetch status/snapshot once to initialize the map.
+`GET /api/bookings/{bookingId}/tracking/status` — owner only. Returns `state`
+(`Ready`, `MeetingPointsMissing`, `Inactive`), `canTrack`, the rental `deadline`
+and `meetingPointsConfigured`.
+
+`GET /api/bookings/{bookingId}/tracking/snapshot` — owner only. Returns the latest
+coordinates, the return destination, the straight-line `distanceMeters` and
+`arrived` (true within 30 metres). Fails with `409 TRACKING_NOT_ACTIVE` outside the
+rental, `409 MEETING_POINT_NOT_CONFIGURED`, `403 FORBIDDEN` for the renter or a
+stranger, and `503 POSITION_NOT_AVAILABLE` before the first phone fix.
+
+### Live updates
+
+Every accepted fix is stored in `vehicle_location` with `source = 'Phone'` and
+published on `/hubs/tracking` as `PositionUpdated` to the booking group, so the
+owner's map updates without polling. `JoinBooking(bookingId)` is rejected for
+anyone but the owner of a running rental. For browser clients, connect to SignalR
+with the BonBon JWT as its access token, join the booking, then fetch
+status/snapshot once to initialize the map.
+
+Apply `database/migrations/009_phone_tracking.sql` to an existing database to drop
+the old Traccar device column and add the phone fix index.

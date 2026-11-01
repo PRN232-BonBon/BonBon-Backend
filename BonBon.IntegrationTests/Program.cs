@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using BonBon.Business.Common;
 using BonBon.Business.DTOs.Bookings;
 using BonBon.Business.DTOs.Vehicles;
 using BonBon.Business.Services.Implementations;
@@ -195,6 +196,27 @@ class Program
             Assert(pickupResult.IsSuccess && pickupResult.Data?.OdometerKm == 50000,
                 "BE-05.4 Xác nhận nhận xe thành công -> InProgress",
                 $"(InspectionId: {pickupResult.Data?.InspectionId}, ODO: {pickupResult.Data?.OdometerKm} km, Fuel: {pickupResult.Data?.FuelLevel}%)");
+
+            // ────────────────────────────────────────────────────────────────
+            // TRACKING — Tự bật trực tiếp ngay khi chủ xe bàn giao xe
+            // ────────���───────────────────────────────────────────────────────
+            Console.WriteLine("\n--- [TRACKING] TỰ BẬT TRỰC TIẾP KHI GIAO XE ---");
+
+            Assert(TrackingRules.IsActive("InProgress")
+                   && !TrackingRules.IsActive("Confirmed")
+                   && !TrackingRules.IsActive("Returned"),
+                "TR.1 Tracking chỉ bật ở trạng thái đang thuê (InProgress)");
+
+            Assert(TrackingRules.ResolveViewerRole(ownerId, ownerId) == TrackingRules.OwnerViewer
+                   && TrackingRules.ResolveViewerRole(customerId, ownerId) is null,
+                "TR.2 Chỉ chủ xe xem được tracking, người thuê thì không");
+
+            var destinationPoint = TrackingRules.GetDestination(10.7792m, 106.6991m);
+            Assert(destinationPoint is not null
+                   && TrackingRules.DistanceMeters(10.7792m, 106.6991m,
+                       destinationPoint.Value.Latitude, destinationPoint.Value.Longitude) == 0
+                   && TrackingRules.IsArrived(0),
+                "TR.3 Điểm đích là điểm trả xe và khoảng cách/arrived tính đúng");
 
             // ────────────────────────────────────────────────────────────────
             // BE-06 — Phí vượt km & Trả xe

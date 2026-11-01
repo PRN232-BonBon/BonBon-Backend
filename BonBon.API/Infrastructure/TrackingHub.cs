@@ -3,7 +3,7 @@ using BonBon.Business.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
-namespace BonBon.API.Hubs;
+namespace BonBon.API.Infrastructure;
 
 [Authorize]
 public sealed class TrackingHub(ITrackingService trackingService) : Hub

@@ -1,9 +1,8 @@
 namespace BonBon.Business.DTOs.Tracking;
 
-/// <summary>Cập nhật trực tiếp phát qua SignalR tới nhóm của booking.</summary>
+/// <summary>Cập nhật trực tiếp phát qua SignalR cho chủ xe của booking.</summary>
 public sealed record TrackingPositionUpdate(
     Guid BookingId,
-    string Stage,
     decimal Latitude,
     decimal Longitude,
     decimal? AccuracyMeters,
