@@ -43,7 +43,10 @@ public sealed class VehiclesController(
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(90 * 1024 * 1024)]
     [ProducesResponseType(typeof(VehicleRegistrationResponse), StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(CancellationToken ct)
+    public async Task<IActionResult> Register(
+        [FromForm] string? metadata,
+        [FromForm] List<IFormFile>? vehicleImages,
+        CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId)) return Unauthorized();
         if (!Request.HasFormContentType)
@@ -52,10 +55,10 @@ public sealed class VehiclesController(
         var form = await Request.ReadFormAsync(ct);
 
         // metadata có thể được gửi dưới dạng field thường hoặc dạng file part (Blob).
-        string? metadata = null;
-        if (form.TryGetValue("metadata", out var metadataValues))
-            metadata = metadataValues.ToString();
-        else if (form.Files.Any(file => file.Name == "metadata"))
+        // Nếu client gửi kèm filename, ASP.NET sẽ bind nó thành IFormFile và giá trị
+        // string ở trên sẽ là null — đọc thủ công để hỗ trợ cả hai kiểu.
+        if (string.IsNullOrWhiteSpace(metadata)
+            && form.Files.Any(file => file.Name == "metadata"))
         {
             var metadataFile = form.Files.First(file => file.Name == "metadata");
             await using var metadataStream = metadataFile.OpenReadStream();
@@ -81,20 +84,22 @@ public sealed class VehiclesController(
         }
         if (request is null) return ProblemResult("INVALID_METADATA", "Thiếu thông tin đăng ký xe.");
 
-        var vehicleImages = form.Files.GetFiles("vehicleImages");
-        if (vehicleImages.Count is < 1 or > 8)
+        var images = vehicleImages is { Count: > 0 }
+            ? vehicleImages
+            : form.Files.GetFiles("vehicleImages");
+        if (images.Count is < 1 or > 8)
             return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe (field: vehicleImages).");
 
         try
         {
-            var images = new List<StoredImage>(vehicleImages.Count);
-            foreach (var image in vehicleImages)
-                images.Add(await _imageProcessor.ProcessAsync(image, ct));
+            var storedImages = new List<StoredImage>(images.Count);
+            foreach (var image in images)
+                storedImages.Add(await _imageProcessor.ProcessAsync(image, ct));
 
             var result = await _vehicleService.RegisterAsync(
                 accountId,
                 request,
-                images,
+                storedImages,
                 ct);
             if (!result.IsSuccess) return ProblemResult(result.ErrorCode!, result.ErrorMessage!);
             return Created($"/api/vehicles/{result.Data!.VehicleId}", result.Data);
