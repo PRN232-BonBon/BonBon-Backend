@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using BonBon.API.Services;
 using BonBon.Business.DTOs.Vehicles;
@@ -42,12 +43,32 @@ public sealed class VehiclesController(
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(90 * 1024 * 1024)]
     [ProducesResponseType(typeof(VehicleRegistrationResponse), StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(
-        [FromForm] string metadata,
-        [FromForm] List<IFormFile> vehicleImages,
-        CancellationToken ct)
+    public async Task<IActionResult> Register(CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId)) return Unauthorized();
+        if (!Request.HasFormContentType)
+            return ProblemResult("INVALID_METADATA", "Body phải là multipart/form-data.");
+
+        var form = await Request.ReadFormAsync(ct);
+
+        // metadata có thể được gửi dưới dạng field thường hoặc dạng file part (Blob).
+        string? metadata = null;
+        if (form.TryGetValue("metadata", out var metadataValues))
+            metadata = metadataValues.ToString();
+        else if (form.Files.Any(file => file.Name == "metadata"))
+        {
+            var metadataFile = form.Files.First(file => file.Name == "metadata");
+            await using var metadataStream = metadataFile.OpenReadStream();
+            using var buffer = new MemoryStream();
+            await metadataStream.CopyToAsync(buffer, ct);
+            metadata = Encoding.UTF8.GetString(buffer.ToArray());
+        }
+
+        if (string.IsNullOrWhiteSpace(metadata))
+            return ProblemResult(
+                "INVALID_METADATA",
+                "Thiếu trường 'metadata' trong form. Gửi JSON thông tin đăng ký xe (tên field: metadata, "
+                + "và ảnh dùng tên field: vehicleImages).");
 
         RegisterVehicleRequest? request;
         try
@@ -59,8 +80,10 @@ public sealed class VehiclesController(
             return ProblemResult("INVALID_METADATA", "Thông tin đăng ký xe không đúng định dạng.");
         }
         if (request is null) return ProblemResult("INVALID_METADATA", "Thiếu thông tin đăng ký xe.");
+
+        var vehicleImages = form.Files.GetFiles("vehicleImages");
         if (vehicleImages.Count is < 1 or > 8)
-            return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe.");
+            return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe (field: vehicleImages).");
 
         try
         {

@@ -1,0 +1,137 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bonbon.kitsuracloud.com/schemas/vehicle-registration-metadata.json",
+  "title": "Vehicle registration metadata",
+  "description": "Giá trị của part `metadata` trong POST /api/vehicles/registrations (multipart/form-data).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plateNumber",
+    "brand",
+    "model",
+    "productionYear",
+    "seats",
+    "transmission",
+    "fuelType",
+    "bodyType",
+    "description",
+    "pickupAddress",
+    "hourPrice",
+    "dayPrice"
+  ],
+  "properties": {
+    "plateNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 30,
+      "description": "Biển số xe. Được lưu uppercase, ví dụ '53X-32343'."
+    },
+    "brand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "Hãng xe, ví dụ 'Toyota'."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Mẫu xe, ví dụ 'Vios'."
+    },
+    "productionYear": {
+      "type": "integer",
+      "minimum": 1990,
+      "maximum": 2100,
+      "description": "Năm sản xuất."
+    },
+    "seats": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 7,
+      "description": "Số chỗ ngồi."
+    },
+    "transmission": {
+      "type": "string",
+      "enum": ["Manual", "Automatic"],
+      "description": "Loại truyền động."
+    },
+    "fuelType": {
+      "type": "string",
+      "enum": ["Gasoline", "Diesel", "Electric", "Hybrid"],
+      "description": "Loại nhiên liệu."
+    },
+    "bodyType": {
+      "type": "string",
+      "enum": ["Sedan", "SUV", "MPV", "Hatchback"],
+      "description": "Dòng xe."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 2000,
+      "description": "Mô tả xe dành cho khách thuê."
+    },
+    "pickupAddress": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1000,
+      "description": "Địa chỉ nhận và trả xe."
+    },
+    "hourPrice": {
+      "type": "number",
+      "minimum": 50000,
+      "maximum": 10000000,
+      "description": "Giá thuê theo giờ (VND)."
+    },
+    "dayPrice": {
+      "type": "number",
+      "minimum": 300000,
+      "maximum": 100000000,
+      "description": "Giá thuê theo ngày (VND)."
+    },
+    "weeklyDiscountEnabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Bật giảm giá cho chuyến thuê từ 7 ngày."
+    },
+    "weeklyDiscountPercent": {
+      "type": ["number", "null"],
+      "minimum": 5,
+      "maximum": 30,
+      "description": "Phần trăm giảm giá tuần. Bắt buộc có khi weeklyDiscountEnabled = true, phải là null khi false."
+    },
+    "mileageLimitEnabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Bật giới hạn quãng đường và phí vượt km."
+    },
+    "dailyMileageLimitKm": {
+      "type": ["integer", "null"],
+      "minimum": 100,
+      "maximum": 800,
+      "description": "Số km tối đa mỗi ngày. Bắt buộc có khi mileageLimitEnabled = true, phải là null khi false."
+    },
+    "overageFeePerKm": {
+      "type": ["number", "null"],
+      "minimum": 1000,
+      "maximum": 10000,
+      "description": "Phí vượt giới hạn mỗi km (VND). Bắt buộc có khi mileageLimitEnabled = true, phải là null khi false."
+    },
+    "rentalTerms": {
+      "type": ["string", "null"],
+      "minLength": 10,
+      "maxLength": 1000,
+      "description": "Điều khoản thuê xe. Nếu có thì tối thiểu 10 ký tự."
+    },
+    "features": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Danh sách tiện nghi của xe, tối đa 20 mục."
+    }
+  }
+}

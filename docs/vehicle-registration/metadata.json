@@ -1,0 +1,24 @@
+{
+  "plateNumber": "53X-32343",
+  "brand": "Toyota",
+  "model": "Vios",
+  "productionYear": 2022,
+  "seats": 5,
+  "transmission": "Automatic",
+  "fuelType": "Gasoline",
+  "bodyType": "Sedan",
+  "description": "Xe sạch sẽ, bảo dưỡng định kỳ, phù hợp đi trong thành phố.",
+  "pickupAddress": "123 Nguyen Hue, Quan 1, TP.HCM",
+  "hourPrice": 100000,
+  "dayPrice": 700000,
+  "weeklyDiscountEnabled": false,
+  "weeklyDiscountPercent": null,
+  "mileageLimitEnabled": true,
+  "dailyMileageLimitKm": 300,
+  "overageFeePerKm": 3000,
+  "rentalTerms": "Khong hut thuoc trong xe.",
+  "features": [
+    "Camera lui",
+    "Bluetooth"
+  ]
+}
