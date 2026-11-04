@@ -121,6 +121,7 @@ public sealed record OwnerBookingRecord(
 
 public interface IBookingRepository
 {
+    Task<BookingDecisionResult> DecideAsync(Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct = default);
     Task<VehiclePricing?> GetVehiclePricingAsync(Guid vehicleId, CancellationToken ct = default);
     Task<bool> IsVehicleAvailableAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
     Task<bool> HasDuplicatePendingBookingAsync(Guid customerAccountId, Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);

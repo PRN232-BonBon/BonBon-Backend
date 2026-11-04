@@ -1,5 +1,8 @@
 namespace BonBon.Business.DTOs.Bookings;
 
+public sealed record BookingDecisionResponse(
+    Guid BookingId, string Status, decimal UnitPrice, decimal QuotedRentalAmount, string Currency, bool IsReplay);
+
 public sealed record RentalWindowResponse(
     string RentalType,
     DateTimeOffset StartAt,

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.11" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BonBon.API/BonBon.API.csproj" />
+    <Using Include="Xunit" />
+    <None Include="../database/migrations/001_initial_schema.sql" Link="Sql/001_initial_schema.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/002_flexible_booking_duration.sql" Link="Sql/002_flexible_booking_duration.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/proposals/004_vnpay_sandbox.sql" Link="Sql/004_vnpay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/proposals/005_booking_quote_guard.sql" Link="Sql/005_booking_quote_guard.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

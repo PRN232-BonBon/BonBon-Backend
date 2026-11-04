@@ -117,10 +117,15 @@ class Program
                 $"(ErrorCode: {duplicateResult.ErrorCode}, Message: {duplicateResult.ErrorMessage})");
 
             // 1.5 Chủ xe duyệt đơn (kiểm tra lại xe & lịch)
-            var approveResult = await bookingService.ApproveAsync(bookingId, ownerId);
-            Assert(approveResult.IsSuccess,
+            var approveResult = await bookingService.ApproveAsync(ownerAccountId: ownerId, bookingId: bookingId);
+            Assert(approveResult.IsSuccess && approveResult.Data?.Status == "AwaitingPayment",
                 "BE-01.5 Chủ xe duyệt đơn thành công",
                 $"(IsSuccess: {approveResult.IsSuccess})");
+
+            var replayResult = await bookingService.ApproveAsync(ownerAccountId: ownerId, bookingId: bookingId);
+            Assert(replayResult.IsSuccess && replayResult.Data?.IsReplay == true,
+                "BE-01.6 Duyệt lại cùng đơn không thay đổi quyết định hoặc giá",
+                $"(IsReplay: {replayResult.Data?.IsReplay})");
 
             // ────────────────────────────────────────────────────────────────
             // BE-02 — API tìm xe theo nhu cầu thuê & ảnh DB

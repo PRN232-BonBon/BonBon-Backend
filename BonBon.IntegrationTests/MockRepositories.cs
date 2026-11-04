@@ -16,6 +16,34 @@ public class MockBookingRepository : IBookingRepository
     private readonly List<InspectionRecord> _inspections = new();
     private readonly List<AdditionalChargeRecord> _charges = new();
 
+    public async Task<BookingDecisionResult> DecideAsync(
+        Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct = default)
+    {
+        if (!Enum.IsDefined(decision)) throw new ArgumentOutOfRangeException(nameof(decision));
+        var booking = await GetByIdAsync(bookingId, ct);
+        if (booking is null) return new(BookingDecisionOutcome.NotFound);
+        if (booking.OwnerAccountId != ownerAccountId) return new(BookingDecisionOutcome.NotOwner);
+
+        var target = decision == BookingDecision.Approve ? "AwaitingPayment" : "Rejected";
+        BookingDecisionSnapshot Snapshot(string status) => new(booking.BookingId, status,
+            booking.UnitPrice, booking.QuotedRentalAmount, booking.Currency);
+        if (booking.Status == target) return new(BookingDecisionOutcome.AlreadyApplied, Snapshot(target));
+        if (booking.Status != "PendingApproval") return new(BookingDecisionOutcome.StateConflict);
+        if (decision == BookingDecision.Approve)
+        {
+            var vehicle = await GetVehiclePricingAsync(booking.VehicleId, ct);
+            if (vehicle is null || vehicle.Status != "Available") return new(BookingDecisionOutcome.VehicleUnavailable);
+            if (!vehicle.IsOwnerActive) return new(BookingDecisionOutcome.OwnerInactive);
+            if (booking.StartAt <= DateTimeOffset.UtcNow) return new(BookingDecisionOutcome.BookingWindowPassed);
+            if (!await IsVehicleAvailableAsync(booking.VehicleId, booking.StartAt, booking.EndAt, ct))
+                return new(BookingDecisionOutcome.ScheduleConflict);
+        }
+        var updated = await UpdateStatusAsync(bookingId, target, new[] { "PendingApproval" }, ct);
+        return updated
+            ? new(BookingDecisionOutcome.Applied, Snapshot(target))
+            : new(BookingDecisionOutcome.StateConflict);
+    }
+
     public Task<VehiclePricing?> GetVehiclePricingAsync(Guid vehicleId, CancellationToken ct = default)
     {
         if (vehicleId != VehicleId) return Task.FromResult<VehiclePricing?>(null);

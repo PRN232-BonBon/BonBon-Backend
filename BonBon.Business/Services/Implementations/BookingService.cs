@@ -11,6 +11,58 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
     private readonly IBookingRepository _bookingRepository = bookingRepository;
 
+    public Task<ServiceResult<BookingDecisionResponse>> ApproveAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Approve, ct);
+
+    public Task<ServiceResult<BookingDecisionResponse>> RejectAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Reject, ct);
+
+    private async Task<ServiceResult<BookingDecisionResponse>> DecideAsync(
+        Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct)
+    {
+        if (ownerAccountId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("OWNER_INACTIVE", "Tài khoản chủ xe không hợp lệ.");
+        if (bookingId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_ID_INVALID", "Mã đặt xe không hợp lệ.");
+        try
+        {
+            var result = await _bookingRepository.DecideAsync(ownerAccountId, bookingId, decision, ct);
+            if (result.Outcome is BookingDecisionOutcome.Applied or BookingDecisionOutcome.AlreadyApplied)
+            {
+                var item = result.Booking ?? throw new InvalidOperationException("Missing booking decision snapshot.");
+                return ServiceResult<BookingDecisionResponse>.Success(new(item.BookingId, item.Status,
+                    item.UnitPrice, item.QuotedRentalAmount, item.Currency,
+                    result.Outcome == BookingDecisionOutcome.AlreadyApplied));
+            }
+            var (code, message) = result.Outcome switch
+            {
+                BookingDecisionOutcome.NotFound => ("BOOKING_NOT_FOUND", "Không tìm thấy đơn đặt xe."),
+                BookingDecisionOutcome.NotOwner => ("BOOKING_NOT_OWNER", "Bạn không phải chủ xe của đơn đặt này."),
+                BookingDecisionOutcome.OwnerInactive => ("OWNER_INACTIVE", "Tài khoản và vai trò chủ xe phải đang hoạt động."),
+                BookingDecisionOutcome.CustomerInactive => ("CUSTOMER_INACTIVE", "Tài khoản và vai trò khách hàng không còn hoạt động."),
+                BookingDecisionOutcome.VehicleUnavailable => ("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt đặt xe."),
+                BookingDecisionOutcome.ScheduleConflict => ("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này."),
+                BookingDecisionOutcome.BookingWindowPassed => ("BOOKING_WINDOW_PASSED", "Đã qua thời gian nhận xe; không thể duyệt."),
+                BookingDecisionOutcome.StateConflict => ("BOOKING_STATE_CONFLICT", "Đơn đặt xe đã có quyết định hoặc đã chuyển sang bước khác."),
+                BookingDecisionOutcome.ConcurrentChange => ("BOOKING_DECISION_RETRY", "Đơn đặt xe vừa thay đổi. Vui lòng thử lại."),
+                _ => throw new InvalidOperationException("Unknown booking decision outcome."),
+            };
+            return ServiceResult<BookingDecisionResponse>.Failure(code, message);
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.ExclusionViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("SCHEDULE_CONFLICT", "Xe vừa được giữ lịch cho một đơn đặt khác.");
+        }
+        catch (PostgresException exception) when (exception.SqlState is "40001" or "40P01" or "55P03" or "57014")
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_RETRY", "Dữ liệu đang được xử lý. Vui lòng thử lại.");
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.CheckViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_REJECTED", "Đơn đặt xe không đáp ứng điều kiện duyệt hoặc từ chối.");
+        }
+    }
+
     public ServiceResult<RentalWindowResponse> ValidateWindow(RentalWindowRequest request) =>
         ValidateWindowCore(request.RentalType, request.StartAt, request.EndAt);
 
@@ -281,71 +333,6 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         var success = await _bookingRepository.CancelAsync(bookingId, ct);
         if (!success)
             return ServiceResult.Failure("CANCEL_FAILED", "Không thể hủy đơn đặt xe lúc này. Vui lòng thử lại.");
-
-        return ServiceResult.Success();
-    }
-
-    public async Task<ServiceResult> ApproveAsync(
-        Guid bookingId,
-        Guid ownerAccountId,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (booking.OwnerAccountId != ownerAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền duyệt đơn đặt xe này.");
-
-        if (booking.Status != "PendingApproval")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
-
-        // BE-01: Kiểm tra thời gian không được trôi vào quá khứ
-        if (booking.StartAt < DateTimeOffset.UtcNow.AddMinutes(-2))
-            return ServiceResult.Failure("PAST_START_TIME", "Thời gian nhận xe đã trôi qua, không thể duyệt đơn.");
-
-        // BE-01: Kiểm tra lại trạng thái xe
-        var vehicle = await _bookingRepository.GetVehiclePricingAsync(booking.VehicleId, ct);
-        if (vehicle is null || vehicle.Status != "Available" || !vehicle.IsOwnerActive)
-            return ServiceResult.Failure("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt cho thuê.");
-
-        // BE-01: Kiểm tra lịch trống
-        var isAvailable = await _bookingRepository.IsVehicleAvailableAsync(booking.VehicleId, booking.StartAt, booking.EndAt, ct);
-        if (!isAvailable)
-            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này.");
-
-        try
-        {
-            var success = await _bookingRepository.ApproveAsync(bookingId, ct);
-            if (!success)
-                return ServiceResult.Failure("APPROVE_FAILED", "Không thể duyệt đơn đặt xe lúc này.");
-
-            return ServiceResult.Success();
-        }
-        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ExclusionViolation)
-        {
-            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch được xác nhận trong khoảng thời gian này.");
-        }
-    }
-
-    public async Task<ServiceResult> RejectAsync(
-        Guid bookingId,
-        Guid ownerAccountId,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (booking.OwnerAccountId != ownerAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền từ chối đơn đặt xe này.");
-
-        if (booking.Status != "PendingApproval")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
-
-        var success = await _bookingRepository.RejectAsync(bookingId, ct);
-        if (!success)
-            return ServiceResult.Failure("REJECT_FAILED", "Không thể từ chối đơn đặt xe lúc này.");
 
         return ServiceResult.Success();
     }
