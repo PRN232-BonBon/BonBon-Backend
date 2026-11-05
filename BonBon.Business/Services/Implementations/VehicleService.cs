@@ -14,6 +14,7 @@ public sealed class VehicleService(
     private static readonly HashSet<string> Transmissions = ["Manual", "Automatic"];
     private static readonly HashSet<string> FuelTypes = ["Gasoline", "Diesel", "Electric", "Hybrid"];
     private static readonly HashSet<string> BodyTypes = ["Sedan", "SUV", "MPV", "Hatchback"];
+    private static readonly HashSet<string> SearchBodyTypes = [.. BodyTypes, "Mini SUV"];
     private readonly IVehicleRepository _vehicleRepository = vehicleRepository;
     private readonly IBookingService _bookingService = bookingService;
 
@@ -106,13 +107,24 @@ public sealed class VehicleService(
         CancellationToken ct = default)
     {
         RentalWindowResponse? window = null;
-        if (request.StartAt.HasValue && request.EndAt.HasValue && !string.IsNullOrWhiteSpace(request.RentalType))
+        var hasWindow = request.StartAt.HasValue || request.EndAt.HasValue || !string.IsNullOrWhiteSpace(request.RentalType);
+        if (hasWindow && (!request.StartAt.HasValue || !request.EndAt.HasValue || string.IsNullOrWhiteSpace(request.RentalType)))
+            return ServiceResult<IReadOnlyList<VehicleCatalogItem>>.Failure("INCOMPLETE_RENTAL_WINDOW", "Vui lòng cung cấp đủ loại thuê, thời gian nhận và trả xe.");
+        if (request.Seats is < 4 or > 7
+            || (!string.IsNullOrWhiteSpace(request.Transmission) && !Transmissions.Contains(request.Transmission.Trim()))
+            || (!string.IsNullOrWhiteSpace(request.FuelType) && !FuelTypes.Contains(request.FuelType.Trim()))
+            || (!string.IsNullOrWhiteSpace(request.BodyType) && !SearchBodyTypes.Contains(request.BodyType.Trim())))
+            return ServiceResult<IReadOnlyList<VehicleCatalogItem>>.Failure("INVALID_SEARCH_FILTER", "Bộ lọc xe không hợp lệ.");
+        if (request.MinPrice is < 0 || request.MaxPrice is < 0 || request.MinPrice > request.MaxPrice)
+            return ServiceResult<IReadOnlyList<VehicleCatalogItem>>.Failure("INVALID_PRICE_RANGE", "Khoảng giá thuê không hợp lệ.");
+
+        if (hasWindow)
         {
             var windowResult = _bookingService.ValidateWindow(new RentalWindowRequest
             {
-                RentalType = request.RentalType,
-                StartAt = request.StartAt.Value,
-                EndAt = request.EndAt.Value,
+                RentalType = request.RentalType!,
+                StartAt = request.StartAt!.Value,
+                EndAt = request.EndAt!.Value,
             });
 
             if (!windowResult.IsSuccess)
@@ -141,13 +153,8 @@ public sealed class VehicleService(
 
             if (window is not null)
             {
-                var unitPrice = window.RentalType == "Hourly" ? v.HourPrice : v.DayPrice;
-                var baseAmount = unitPrice * window.BillableUnits;
-                var discountPercent = window.RentalType == "Daily" && window.BillableUnits >= 7 && v.WeeklyDiscountEnabled
-                    ? (v.WeeklyDiscountPercent ?? 0)
-                    : 0;
-                var discountAmount = decimal.Round(baseAmount * discountPercent / 100, 0, MidpointRounding.AwayFromZero);
-                quotedAmount = baseAmount - discountAmount;
+                quotedAmount = RentalPricing.Calculate(window.RentalType, window.BillableUnits,
+                    v.HourPrice, v.DayPrice, v.WeeklyDiscountEnabled, v.WeeklyDiscountPercent).TotalAmount;
             }
 
             return new VehicleCatalogItem(

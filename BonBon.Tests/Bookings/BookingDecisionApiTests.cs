@@ -55,6 +55,18 @@ public class BookingDecisionApiTests
         service.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task Manual_confirm_payment_endpoint_is_not_exposed()
+    {
+        var service = new Mock<IBookingService>(MockBehavior.Strict);
+        using var server = CreateServer(service.Object);
+        using var client = server.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Test-Role", "Customer");
+        var response = await client.PostAsync($"/api/bookings/{Booking}/confirm-payment", null);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        service.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("BOOKING_NOT_FOUND", 404)]
     [InlineData("BOOKING_NOT_OWNER", 403)]

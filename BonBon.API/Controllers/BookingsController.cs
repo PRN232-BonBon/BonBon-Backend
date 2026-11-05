@@ -163,23 +163,6 @@ public sealed class BookingsController(IBookingService bookingService) : Control
             : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 
-    [HttpPost("{id:guid}/confirm-payment")]
-    [Authorize]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> ConfirmPayment([FromRoute] Guid id, CancellationToken ct)
-    {
-        if (!TryGetAccountId(out var accountId)) return Unauthorized();
-
-        var isAdmin = User.IsInRole("Admin");
-        var result = await _bookingService.ConfirmPaymentAsync(id, accountId, isAdmin, ct);
-        return result.IsSuccess
-            ? Ok(new { message = "Xác nhận thanh toán thành công. Đơn đặt xe đã sẵn sàng nhận xe." })
-            : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
-    }
-
     [HttpPost("{id:guid}/pickup")]
     [Authorize]
     [ProducesResponseType(typeof(InspectionResponse), StatusCodes.Status200OK)]

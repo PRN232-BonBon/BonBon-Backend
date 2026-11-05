@@ -15,6 +15,44 @@ env:
   IMAGE_NAME: prn232-bonbon/bonbon-backend
 
 jobs:
+  test:
+    name: Test API and PostgreSQL queries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run unit, API and isolated PostgreSQL tests
+        env:
+          BONBON_TEST_POSTGRES_CONSENT: I_CONFIRM_DISPOSABLE_LOCAL_POSTGRES
+          BONBON_TEST_POSTGRES_ADMIN: Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=disposable_ci_only
+        run: dotnet test BonBon.Tests/BonBon.Tests.csproj --configuration Release --logger trx
+      - name: Run in-memory booking lifecycle checks
+        run: dotnet run --project BonBon.IntegrationTests/BonBon.IntegrationTests.csproj --configuration Release
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: '**/TestResults/*.trx'
+
   build-admin:
     name: Build admin portal
     runs-on: ubuntu-latest
@@ -46,6 +84,7 @@ jobs:
 
   build-and-push:
     name: Build and publish image
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,6 +131,7 @@ jobs:
     env:
       DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '/opt/bonbon/BonBon-Backend/.env' }}
       API_HEALTH_URL: ${{ vars.API_HEALTH_URL || 'http://127.0.0.1:8080/health' }}
+      API_CATALOG_URL: ${{ vars.API_CATALOG_URL || 'http://127.0.0.1:8080/api/vehicles' }}
 
     steps:
       - name: Check out deployment files
@@ -123,6 +163,7 @@ jobs:
       - name: Validate server configuration
         shell: bash
         run: |
+          command -v jq > /dev/null
           test -f "$DEPLOY_ENV_FILE"
           test "$(stat -c '%a' "$DEPLOY_ENV_FILE")" = "600"
 
@@ -154,3 +195,9 @@ jobs:
           done
           docker logs --tail 100 bonbon-api-1
           exit 1
+
+      - name: Verify vehicle catalog query
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --max-time 20 "$API_CATALOG_URL" \
+            | jq --exit-status 'type == "array"' > /dev/null

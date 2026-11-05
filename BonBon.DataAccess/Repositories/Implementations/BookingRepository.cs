@@ -346,60 +346,6 @@ public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepo
         }, ct);
     }
 
-    public async Task<bool> ApproveAsync(Guid bookingId, CancellationToken ct = default)
-    {
-        const string sql = """
-            UPDATE bonbon.booking
-            SET status = 'AwaitingPayment'
-            WHERE booking_id = @booking_id
-              AND status = 'PendingApproval'
-            """;
-
-        return await WithConnectionAsync(async connection =>
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("booking_id", bookingId);
-            var affected = await command.ExecuteNonQueryAsync(ct);
-            return affected > 0;
-        }, ct);
-    }
-
-    public async Task<bool> RejectAsync(Guid bookingId, CancellationToken ct = default)
-    {
-        const string sql = """
-            UPDATE bonbon.booking
-            SET status = 'Rejected'
-            WHERE booking_id = @booking_id
-              AND status = 'PendingApproval'
-            """;
-
-        return await WithConnectionAsync(async connection =>
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("booking_id", bookingId);
-            var affected = await command.ExecuteNonQueryAsync(ct);
-            return affected > 0;
-        }, ct);
-    }
-
-    public async Task<bool> ConfirmPaymentAsync(Guid bookingId, CancellationToken ct = default)
-    {
-        const string sql = """
-            UPDATE bonbon.booking
-            SET status = 'Confirmed'
-            WHERE booking_id = @booking_id
-              AND status = 'AwaitingPayment'
-            """;
-
-        return await WithConnectionAsync(async connection =>
-        {
-            await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("booking_id", bookingId);
-            var affected = await command.ExecuteNonQueryAsync(ct);
-            return affected > 0;
-        }, ct);
-    }
-
     public async Task<InspectionRecord?> GetInspectionAsync(Guid bookingId, string kind, CancellationToken ct = default)
     {
         const string sql = """

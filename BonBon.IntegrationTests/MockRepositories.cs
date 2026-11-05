@@ -167,13 +167,8 @@ public class MockBookingRepository : IBookingRepository
     public Task<bool> CancelAsync(Guid bookingId, CancellationToken ct = default) =>
         UpdateStatusAsync(bookingId, "Cancelled", new[] { "PendingApproval", "AwaitingPayment" }, ct);
 
-    public Task<bool> ApproveAsync(Guid bookingId, CancellationToken ct = default) =>
-        UpdateStatusAsync(bookingId, "AwaitingPayment", new[] { "PendingApproval" }, ct);
-
-    public Task<bool> RejectAsync(Guid bookingId, CancellationToken ct = default) =>
-        UpdateStatusAsync(bookingId, "Rejected", new[] { "PendingApproval" }, ct);
-
-    public Task<bool> ConfirmPaymentAsync(Guid bookingId, CancellationToken ct = default) =>
+    // Test fixture only: payment/IPN behavior is covered by the payment test suite.
+    public Task<bool> SimulateVerifiedPaymentAsync(Guid bookingId, CancellationToken ct = default) =>
         UpdateStatusAsync(bookingId, "Confirmed", new[] { "AwaitingPayment" }, ct);
 
     public Task<InspectionRecord?> GetInspectionAsync(Guid bookingId, string kind, CancellationToken ct = default) =>

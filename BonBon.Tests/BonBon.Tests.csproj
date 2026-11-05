@@ -20,6 +20,12 @@
     <Using Include="Xunit" />
     <None Include="../database/migrations/001_initial_schema.sql" Link="Sql/001_initial_schema.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/migrations/002_flexible_booking_duration.sql" Link="Sql/002_flexible_booking_duration.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/003_max_daily_rental.sql" Link="Sql/003_max_daily_rental.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/004_minimal_vehicle_details.sql" Link="Sql/004_minimal_vehicle_details.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/006_owner_vehicle_registration.sql" Link="Sql/006_owner_vehicle_registration.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/007_remove_vehicle_registration_document.sql" Link="Sql/007_remove_vehicle_registration_document.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/008_admin_vehicle_review.sql" Link="Sql/008_admin_vehicle_review.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/seeds/payment_sample.sql" Link="Sql/payment_sample.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/004_vnpay_sandbox.sql" Link="Sql/004_vnpay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/005_booking_quote_guard.sql" Link="Sql/005_booking_quote_guard.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

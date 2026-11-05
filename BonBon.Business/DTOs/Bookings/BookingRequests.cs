@@ -22,15 +22,6 @@ public abstract class RentalWindowRequestBase
     public DateTimeOffset EndAt { get; init; }
 }
 
-public sealed class ConfirmPaymentRequest
-{
-    [MaxLength(50)]
-    public string? Provider { get; init; } = "PlatformMock";
-
-    [MaxLength(200)]
-    public string? ProviderReference { get; init; }
-}
-
 public sealed class ConfirmPickupRequest
 {
     [Required]

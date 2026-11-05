@@ -128,6 +128,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 // ─── Controllers ─────────────────────────────────────────────────────────────
 builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddEndpointsApiExplorer();
 
 // ─── Swagger với Bearer support ──────────────────────────────────────────────
@@ -202,6 +204,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("Frontend");
+// Keep CORS outside the error handler so allowed origins also receive handled 500 responses.
+app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();

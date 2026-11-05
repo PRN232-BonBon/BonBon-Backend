@@ -10,7 +10,7 @@ public sealed class LocalPostgresFactAttribute : FactAttribute
     public LocalPostgresFactAttribute()
     {
         if (!DisposablePostgresDatabase.IsExplicitlyEnabled)
-            Skip = "Requires explicit opt-in to a disposable local PostgreSQL 16 server; shared DB is never used.";
+            Skip = "Requires explicit opt-in to a disposable local PostgreSQL 16+ server; shared DB is never used.";
     }
 }
 
@@ -19,7 +19,7 @@ public sealed class LocalPostgresTheoryAttribute : TheoryAttribute
     public LocalPostgresTheoryAttribute()
     {
         if (!DisposablePostgresDatabase.IsExplicitlyEnabled)
-            Skip = "Requires explicit opt-in to a disposable local PostgreSQL 16 server; shared DB is never used.";
+            Skip = "Requires explicit opt-in to a disposable local PostgreSQL 16+ server; shared DB is never used.";
     }
 }
 
@@ -64,8 +64,8 @@ public sealed class DisposablePostgresDatabase : IAsyncDisposable
         {
             await using var admin = new NpgsqlConnection(database._adminConnection);
             await admin.OpenAsync();
-            if (admin.PostgreSqlVersion.Major != 16)
-                throw new InvalidOperationException("Integration tests require PostgreSQL 16.");
+            if (admin.PostgreSqlVersion.Major < 16)
+                throw new InvalidOperationException("Integration tests require PostgreSQL 16 or newer.");
             // Identifier is generated internally from a fixed prefix + Guid, never from configuration.
             await using (var create = new NpgsqlCommand($"CREATE DATABASE \"{database._databaseName}\"", admin))
                 await create.ExecuteNonQueryAsync();
@@ -77,6 +77,12 @@ public sealed class DisposablePostgresDatabase : IAsyncDisposable
             database.ConnectionString = builder.ConnectionString;
             await database.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", "001_initial_schema.sql")));
             await database.SeedAsync();
+            // Load structural migrations used by the deployed repositories, never demo seed data.
+            // 001 already contains the flexible-duration schema; historical 002 expects the old quantity column.
+            foreach (var migration in new[] { "003_max_daily_rental.sql",
+                "004_minimal_vehicle_details.sql", "006_owner_vehicle_registration.sql",
+                "007_remove_vehicle_registration_document.sql", "008_admin_vehicle_review.sql" })
+                await database.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", migration)));
             return database;
         }
         catch

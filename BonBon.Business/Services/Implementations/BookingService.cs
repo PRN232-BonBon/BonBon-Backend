@@ -86,14 +86,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             return ServiceResult<BookingQuoteResponse>.Failure("OWNER_INACTIVE", "Chủ xe hiện chưa sẵn sàng cho thuê.");
 
         var normalized = window.Data!;
-        var unitPrice = normalized.RentalType == "Hourly" ? vehicle.HourPrice : vehicle.DayPrice;
-        var baseRentalAmount = unitPrice * normalized.BillableUnits;
-        var discountPercent = normalized.RentalType == "Daily"
-            && normalized.BillableUnits >= 7
-            && vehicle.WeeklyDiscountEnabled
-            ? vehicle.WeeklyDiscountPercent ?? 0
-            : 0;
-        var discountAmount = decimal.Round(baseRentalAmount * discountPercent / 100, 0, MidpointRounding.AwayFromZero);
+        var price = RentalPricing.Calculate(normalized.RentalType, normalized.BillableUnits,
+            vehicle.HourPrice, vehicle.DayPrice, vehicle.WeeklyDiscountEnabled, vehicle.WeeklyDiscountPercent);
         var includedMileageKm = vehicle.MileageLimitEnabled
             ? vehicle.DailyMileageLimitKm * (normalized.RentalType == "Daily" ? normalized.BillableUnits : 1)
             : null;
@@ -106,11 +100,11 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             normalized.StartAt,
             normalized.EndAt,
             normalized.BillableUnits,
-            unitPrice,
-            baseRentalAmount,
-            discountPercent,
-            discountAmount,
-            baseRentalAmount - discountAmount,
+            price.UnitPrice,
+            price.BaseAmount,
+            price.DiscountPercent,
+            price.DiscountAmount,
+            price.TotalAmount,
             includedMileageKm,
             vehicle.MileageLimitEnabled ? vehicle.OverageFeePerKm : null,
             vehicle.RentalTerms,
@@ -337,29 +331,6 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         return ServiceResult.Success();
     }
 
-    public async Task<ServiceResult> ConfirmPaymentAsync(
-        Guid bookingId,
-        Guid currentAccountId,
-        bool isAdmin = false,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Bạn không có quyền xác nhận thanh toán cho đơn này.");
-
-        if (booking.Status != "AwaitingPayment")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ thanh toán.");
-
-        var success = await _bookingRepository.ConfirmPaymentAsync(bookingId, ct);
-        if (!success)
-            return ServiceResult.Failure("CONFIRM_PAYMENT_FAILED", "Không thể xác nhận thanh toán lúc này.");
-
-        return ServiceResult.Success();
-    }
-
     public async Task<ServiceResult<InspectionResponse>> ConfirmPickupAsync(
         Guid bookingId,
         Guid currentAccountId,
@@ -447,33 +418,24 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             ct);
 
         // BE-06: Tính quãng đường thực tế và phí vượt km theo snapshot đã lưu lúc đặt
-        var actualDistance = request.OdometerKm - (pickup.OdometerKm ?? 0);
-        decimal excessKm = 0;
-        decimal excessFee = 0;
+        var mileage = MileagePricing.Calculate(pickup.OdometerKm ?? 0, request.OdometerKm,
+            booking.IncludedMileageKm, booking.OverageFeePerKm);
         Guid? chargeId = null;
-
-        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
+        if (mileage.Fee > 0)
         {
-            excessKm = actualDistance - booking.IncludedMileageKm.Value;
-            var feeRate = booking.OverageFeePerKm ?? 0;
-            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
-
-            if (excessFee > 0)
-            {
-                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
-                    bookingId, excessKm, feeRate, excessFee, ct);
-                chargeId = charge?.AdditionalChargeId;
-            }
+            var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
+                bookingId, mileage.ExcessKm, booking.OverageFeePerKm ?? 0, mileage.Fee, ct);
+            chargeId = charge?.AdditionalChargeId;
         }
 
         await _bookingRepository.UpdateStatusAsync(bookingId, "Returned", ["InProgress"], ct);
 
         return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
-            actualDistance,
+            mileage.ActualDistanceKm,
             booking.IncludedMileageKm,
-            excessKm,
+            mileage.ExcessKm,
             booking.OverageFeePerKm,
-            excessFee,
+            mileage.Fee,
             chargeId));
     }
 
@@ -520,31 +482,17 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         if (pickup is null || returnIns is null)
             return ServiceResult<ExcessMileageCalculationResponse>.Failure("INSPECTIONS_INCOMPLETE", "Chưa đủ biên bản nhận và trả xe để tính phí.");
 
-        var actualDistance = (returnIns.OdometerKm ?? 0) - (pickup.OdometerKm ?? 0);
-        decimal excessKm = 0;
-        decimal excessFee = 0;
-        Guid? chargeId = null;
-
-        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
-        {
-            excessKm = actualDistance - booking.IncludedMileageKm.Value;
-            var feeRate = booking.OverageFeePerKm ?? 0;
-            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
-
-            if (excessFee > 0)
-            {
-                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
-                    bookingId, excessKm, feeRate, excessFee, ct);
-                chargeId = charge?.AdditionalChargeId;
-            }
-        }
+        var mileage = MileagePricing.Calculate(pickup.OdometerKm ?? 0, returnIns.OdometerKm ?? 0,
+            booking.IncludedMileageKm, booking.OverageFeePerKm);
+        // GET is read-only: the return command is responsible for persisting charges.
+        var chargeId = booking.AdditionalCharges.FirstOrDefault(c => c.ReasonCode == "EXCESS_MILEAGE")?.AdditionalChargeId;
 
         return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
-            actualDistance,
+            mileage.ActualDistanceKm,
             booking.IncludedMileageKm,
-            excessKm,
+            mileage.ExcessKm,
             booking.OverageFeePerKm,
-            excessFee,
+            mileage.Fee,
             chargeId));
     }
 

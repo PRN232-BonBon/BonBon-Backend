@@ -179,10 +179,10 @@ class Program
                 $"(ErrorCode: {earlyPickup.ErrorCode}, Message: {earlyPickup.ErrorMessage})");
 
             // 5.2 Xác nhận thanh toán -> Chuyển sang Confirmed
-            var payResult = await bookingService.ConfirmPaymentAsync(bookingId, customerId, false);
-            Assert(payResult.IsSuccess,
-                "BE-05.2 Xác nhận thanh toán thành công -> Confirmed",
-                $"(IsSuccess: {payResult.IsSuccess})");
+            var paymentApplied = await mockBookingRepo.SimulateVerifiedPaymentAsync(bookingId);
+            Assert(paymentApplied,
+                "BE-05.2 Fixture mô phỏng payment đã xác thực -> Confirmed",
+                $"(Applied: {paymentApplied})");
 
             // 5.3 Chặn hoàn thành chuyến khi chưa trả xe
             var earlyComplete = await bookingService.CompleteBookingAsync(bookingId, customerId, false);
