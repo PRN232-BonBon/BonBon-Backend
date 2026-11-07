@@ -35,7 +35,17 @@ public sealed record OwnerVehicle(
     string PlateNumber,
     string Status,
     string? RejectionReason,
-    int ImageCount);
+    int ImageCount,
+    int? ProductionYear,
+    int Seats,
+    string Transmission,
+    string BodyType,
+    string PickupAddress,
+    decimal HourPrice,
+    decimal DayPrice,
+    string? CoverImageUrl);
+
+public sealed record OwnerAvailabilityBlock(Guid BlockId, Guid VehicleId, DateTimeOffset StartAt, DateTimeOffset EndAt, string? Reason);
 
 public sealed record VehicleSearchFilter(
     string? Location,
@@ -84,6 +94,7 @@ public interface IVehicleRepository
         CancellationToken ct = default);
 
     Task<IReadOnlyList<OwnerVehicle>> GetMineAsync(Guid ownerAccountId, CancellationToken ct = default);
+    Task<IReadOnlyList<OwnerAvailabilityBlock>> GetOwnerBlocksAsync(Guid ownerAccountId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
     Task<(byte[] Data, string ContentType)?> GetImageAsync(Guid imageId, CancellationToken ct = default);
     Task<IReadOnlyList<VehicleCatalogRecord>> SearchAsync(VehicleSearchFilter filter, CancellationToken ct = default);
 }

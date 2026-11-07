@@ -99,7 +99,8 @@ public sealed class VehicleService(
             (await _vehicleRepository.GetMineAsync(ownerAccountId, ct))
                 .Select(item => new OwnerVehicleResponse(
                     item.VehicleId, item.Brand, item.Model, item.PlateNumber,
-                    item.Status, item.RejectionReason, item.ImageCount))
+                    item.Status, item.RejectionReason, item.ImageCount, item.ProductionYear, item.Seats,
+                    item.Transmission, item.BodyType, item.PickupAddress, item.HourPrice, item.DayPrice, item.CoverImageUrl))
                 .ToList());
 
     public async Task<ServiceResult<IReadOnlyList<VehicleCatalogItem>>> SearchAsync(

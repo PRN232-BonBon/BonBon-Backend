@@ -240,6 +240,9 @@ public class MockVehicleRepository : IVehicleRepository
     public Task<IReadOnlyList<OwnerVehicle>> GetMineAsync(Guid ownerAccountId, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
+    public Task<IReadOnlyList<OwnerAvailabilityBlock>> GetOwnerBlocksAsync(Guid ownerAccountId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OwnerAvailabilityBlock>>(Array.Empty<OwnerAvailabilityBlock>());
+
     public Task<(byte[] Data, string ContentType)?> GetImageAsync(Guid imageId, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
