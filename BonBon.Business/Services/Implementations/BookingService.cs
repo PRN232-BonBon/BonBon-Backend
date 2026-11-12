@@ -368,6 +368,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             request.InspectedAt,
             ct);
 
+        // Bàn giao xe xong là chuyến bắt đầu: tracking của cả hai bên tự mở
+        // vì TrackingRules coi trạng thái InProgress là đang thuê.
         await _bookingRepository.UpdateStatusAsync(bookingId, "InProgress", ["Confirmed", "ReadyForPickup"], ct);
 
         return ServiceResult<InspectionResponse>.Success(new InspectionResponse(

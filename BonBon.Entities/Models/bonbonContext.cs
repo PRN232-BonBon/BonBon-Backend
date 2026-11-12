@@ -162,6 +162,10 @@ public partial class bonbonContext : DbContext
                 .HasComputedColumnSql("(2)::smallint", true)
                 .HasComment("Generated constant 2; composite FK enforces Customer membership.");
             entity.Property(e => e.end_at).HasComment("Booked return deadline, not the actual return time.");
+            entity.Property(e => e.pickup_meeting_latitude).HasPrecision(9, 6);
+            entity.Property(e => e.pickup_meeting_longitude).HasPrecision(10, 6);
+            entity.Property(e => e.return_meeting_latitude).HasPrecision(9, 6);
+            entity.Property(e => e.return_meeting_longitude).HasPrecision(10, 6);
             entity.Property(e => e.quoted_rental_amount)
                 .HasPrecision(18, 2)
                 .HasComputedColumnSql("((billable_units)::numeric * unit_price_snapshot)", true)

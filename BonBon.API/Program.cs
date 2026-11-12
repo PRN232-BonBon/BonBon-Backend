@@ -1,10 +1,10 @@
 using System.Text;
+using BonBon.API.Infrastructure;
 using System.Net;
 using BonBon.API.Configuration;
 using BonBon.Business.Configuration;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.Services.Interfaces;
-using BonBon.API.Services;
 using BonBon.DataAccess;
 using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
@@ -44,6 +44,7 @@ else builder.Services.AddDbContext<BonBonDbContext>(options =>
 builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
+builder.Services.AddScoped<ITrackingRepository,     TrackingRepository>();
 builder.Services.AddScoped<IVehicleRepository,      VehicleRepository>();
 builder.Services.AddScoped<IAdminRepository,        AdminRepository>();
 
@@ -51,6 +52,8 @@ builder.Services.AddScoped<IAdminRepository,        AdminRepository>();
 builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<ITrackingService, TrackingService>();
+builder.Services.AddSignalR();
 builder.Services.AddScoped<IVehicleService, VehicleService>();
 builder.Services.AddSingleton<VehicleImageProcessor>();
 // Payment is opt-in; no startup migration or gateway/network request is made.
@@ -85,6 +88,16 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
         ClockSkew                = TimeSpan.Zero, // Không cho phép trễ
     };
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) && context.Request.Path.StartsWithSegments("/hubs/tracking"))
+                context.Token = accessToken;
+            return Task.CompletedTask;
+        },
+    };
 });
 
 builder.Services.AddAuthorization();
@@ -109,7 +122,8 @@ builder.Services.AddCors(options =>
     options.AddPolicy("Frontend", policy => policy
         .WithOrigins(allowedOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod());
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -228,5 +242,6 @@ else app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.MapControllers();
+app.MapHub<TrackingHub>("/hubs/tracking");
 
 app.Run();
