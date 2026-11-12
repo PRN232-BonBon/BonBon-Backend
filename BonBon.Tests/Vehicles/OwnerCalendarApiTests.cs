@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using BonBon.API.Controllers;
+using BonBon.API.Infrastructure;
 using BonBon.API.Services;
 using BonBon.Business.Services.Interfaces;
 using BonBon.DataAccess.Repositories.Interfaces;
