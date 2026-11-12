@@ -11,6 +11,58 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
     private readonly IBookingRepository _bookingRepository = bookingRepository;
 
+    public Task<ServiceResult<BookingDecisionResponse>> ApproveAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Approve, ct);
+
+    public Task<ServiceResult<BookingDecisionResponse>> RejectAsync(Guid ownerAccountId, Guid bookingId, CancellationToken ct = default) =>
+        DecideAsync(ownerAccountId, bookingId, BookingDecision.Reject, ct);
+
+    private async Task<ServiceResult<BookingDecisionResponse>> DecideAsync(
+        Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct)
+    {
+        if (ownerAccountId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("OWNER_INACTIVE", "Tài khoản chủ xe không hợp lệ.");
+        if (bookingId == Guid.Empty)
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_ID_INVALID", "Mã đặt xe không hợp lệ.");
+        try
+        {
+            var result = await _bookingRepository.DecideAsync(ownerAccountId, bookingId, decision, ct);
+            if (result.Outcome is BookingDecisionOutcome.Applied or BookingDecisionOutcome.AlreadyApplied)
+            {
+                var item = result.Booking ?? throw new InvalidOperationException("Missing booking decision snapshot.");
+                return ServiceResult<BookingDecisionResponse>.Success(new(item.BookingId, item.Status,
+                    item.UnitPrice, item.QuotedRentalAmount, item.Currency,
+                    result.Outcome == BookingDecisionOutcome.AlreadyApplied));
+            }
+            var (code, message) = result.Outcome switch
+            {
+                BookingDecisionOutcome.NotFound => ("BOOKING_NOT_FOUND", "Không tìm thấy đơn đặt xe."),
+                BookingDecisionOutcome.NotOwner => ("BOOKING_NOT_OWNER", "Bạn không phải chủ xe của đơn đặt này."),
+                BookingDecisionOutcome.OwnerInactive => ("OWNER_INACTIVE", "Tài khoản và vai trò chủ xe phải đang hoạt động."),
+                BookingDecisionOutcome.CustomerInactive => ("CUSTOMER_INACTIVE", "Tài khoản và vai trò khách hàng không còn hoạt động."),
+                BookingDecisionOutcome.VehicleUnavailable => ("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt đặt xe."),
+                BookingDecisionOutcome.ScheduleConflict => ("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này."),
+                BookingDecisionOutcome.BookingWindowPassed => ("BOOKING_WINDOW_PASSED", "Đã qua thời gian nhận xe; không thể duyệt."),
+                BookingDecisionOutcome.StateConflict => ("BOOKING_STATE_CONFLICT", "Đơn đặt xe đã có quyết định hoặc đã chuyển sang bước khác."),
+                BookingDecisionOutcome.ConcurrentChange => ("BOOKING_DECISION_RETRY", "Đơn đặt xe vừa thay đổi. Vui lòng thử lại."),
+                _ => throw new InvalidOperationException("Unknown booking decision outcome."),
+            };
+            return ServiceResult<BookingDecisionResponse>.Failure(code, message);
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.ExclusionViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("SCHEDULE_CONFLICT", "Xe vừa được giữ lịch cho một đơn đặt khác.");
+        }
+        catch (PostgresException exception) when (exception.SqlState is "40001" or "40P01" or "55P03" or "57014")
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_RETRY", "Dữ liệu đang được xử lý. Vui lòng thử lại.");
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.CheckViolation)
+        {
+            return ServiceResult<BookingDecisionResponse>.Failure("BOOKING_DECISION_REJECTED", "Đơn đặt xe không đáp ứng điều kiện duyệt hoặc từ chối.");
+        }
+    }
+
     public ServiceResult<RentalWindowResponse> ValidateWindow(RentalWindowRequest request) =>
         ValidateWindowCore(request.RentalType, request.StartAt, request.EndAt);
 
@@ -34,14 +86,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             return ServiceResult<BookingQuoteResponse>.Failure("OWNER_INACTIVE", "Chủ xe hiện chưa sẵn sàng cho thuê.");
 
         var normalized = window.Data!;
-        var unitPrice = normalized.RentalType == "Hourly" ? vehicle.HourPrice : vehicle.DayPrice;
-        var baseRentalAmount = unitPrice * normalized.BillableUnits;
-        var discountPercent = normalized.RentalType == "Daily"
-            && normalized.BillableUnits >= 7
-            && vehicle.WeeklyDiscountEnabled
-            ? vehicle.WeeklyDiscountPercent ?? 0
-            : 0;
-        var discountAmount = decimal.Round(baseRentalAmount * discountPercent / 100, 0, MidpointRounding.AwayFromZero);
+        var price = RentalPricing.Calculate(normalized.RentalType, normalized.BillableUnits,
+            vehicle.HourPrice, vehicle.DayPrice, vehicle.WeeklyDiscountEnabled, vehicle.WeeklyDiscountPercent);
         var includedMileageKm = vehicle.MileageLimitEnabled
             ? vehicle.DailyMileageLimitKm * (normalized.RentalType == "Daily" ? normalized.BillableUnits : 1)
             : null;
@@ -54,11 +100,11 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             normalized.StartAt,
             normalized.EndAt,
             normalized.BillableUnits,
-            unitPrice,
-            baseRentalAmount,
-            discountPercent,
-            discountAmount,
-            baseRentalAmount - discountAmount,
+            price.UnitPrice,
+            price.BaseAmount,
+            price.DiscountPercent,
+            price.DiscountAmount,
+            price.TotalAmount,
             includedMileageKm,
             vehicle.MileageLimitEnabled ? vehicle.OverageFeePerKm : null,
             vehicle.RentalTerms,
@@ -285,94 +331,6 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         return ServiceResult.Success();
     }
 
-    public async Task<ServiceResult> ApproveAsync(
-        Guid bookingId,
-        Guid ownerAccountId,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (booking.OwnerAccountId != ownerAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền duyệt đơn đặt xe này.");
-
-        if (booking.Status != "PendingApproval")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
-
-        // BE-01: Kiểm tra thời gian không được trôi vào quá khứ
-        if (booking.StartAt < DateTimeOffset.UtcNow.AddMinutes(-2))
-            return ServiceResult.Failure("PAST_START_TIME", "Thời gian nhận xe đã trôi qua, không thể duyệt đơn.");
-
-        // BE-01: Kiểm tra lại trạng thái xe
-        var vehicle = await _bookingRepository.GetVehiclePricingAsync(booking.VehicleId, ct);
-        if (vehicle is null || vehicle.Status != "Available" || !vehicle.IsOwnerActive)
-            return ServiceResult.Failure("VEHICLE_UNAVAILABLE", "Xe hiện không sẵn sàng để duyệt cho thuê.");
-
-        // BE-01: Kiểm tra lịch trống
-        var isAvailable = await _bookingRepository.IsVehicleAvailableAsync(booking.VehicleId, booking.StartAt, booking.EndAt, ct);
-        if (!isAvailable)
-            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch trong khoảng thời gian này.");
-
-        try
-        {
-            var success = await _bookingRepository.ApproveAsync(bookingId, ct);
-            if (!success)
-                return ServiceResult.Failure("APPROVE_FAILED", "Không thể duyệt đơn đặt xe lúc này.");
-
-            return ServiceResult.Success();
-        }
-        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ExclusionViolation)
-        {
-            return ServiceResult.Failure("SCHEDULE_CONFLICT", "Xe đã có lịch được xác nhận trong khoảng thời gian này.");
-        }
-    }
-
-    public async Task<ServiceResult> RejectAsync(
-        Guid bookingId,
-        Guid ownerAccountId,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (booking.OwnerAccountId != ownerAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Chỉ chủ xe mới có quyền từ chối đơn đặt xe này.");
-
-        if (booking.Status != "PendingApproval")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ duyệt.");
-
-        var success = await _bookingRepository.RejectAsync(bookingId, ct);
-        if (!success)
-            return ServiceResult.Failure("REJECT_FAILED", "Không thể từ chối đơn đặt xe lúc này.");
-
-        return ServiceResult.Success();
-    }
-
-    public async Task<ServiceResult> ConfirmPaymentAsync(
-        Guid bookingId,
-        Guid currentAccountId,
-        bool isAdmin = false,
-        CancellationToken ct = default)
-    {
-        var booking = await _bookingRepository.GetByIdAsync(bookingId, ct);
-        if (booking is null)
-            return ServiceResult.Failure("BOOKING_NOT_FOUND", "Không tìm thấy thông tin đơn đặt xe.");
-
-        if (!isAdmin && booking.CustomerAccountId != currentAccountId && booking.OwnerAccountId != currentAccountId)
-            return ServiceResult.Failure("FORBIDDEN", "Bạn không có quyền xác nhận thanh toán cho đơn này.");
-
-        if (booking.Status != "AwaitingPayment")
-            return ServiceResult.Failure("INVALID_STATUS", "Đơn đặt xe không ở trạng thái chờ thanh toán.");
-
-        var success = await _bookingRepository.ConfirmPaymentAsync(bookingId, ct);
-        if (!success)
-            return ServiceResult.Failure("CONFIRM_PAYMENT_FAILED", "Không thể xác nhận thanh toán lúc này.");
-
-        return ServiceResult.Success();
-    }
-
     public async Task<ServiceResult<InspectionResponse>> ConfirmPickupAsync(
         Guid bookingId,
         Guid currentAccountId,
@@ -462,33 +420,24 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
             ct);
 
         // BE-06: Tính quãng đường thực tế và phí vượt km theo snapshot đã lưu lúc đặt
-        var actualDistance = request.OdometerKm - (pickup.OdometerKm ?? 0);
-        decimal excessKm = 0;
-        decimal excessFee = 0;
+        var mileage = MileagePricing.Calculate(pickup.OdometerKm ?? 0, request.OdometerKm,
+            booking.IncludedMileageKm, booking.OverageFeePerKm);
         Guid? chargeId = null;
-
-        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
+        if (mileage.Fee > 0)
         {
-            excessKm = actualDistance - booking.IncludedMileageKm.Value;
-            var feeRate = booking.OverageFeePerKm ?? 0;
-            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
-
-            if (excessFee > 0)
-            {
-                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
-                    bookingId, excessKm, feeRate, excessFee, ct);
-                chargeId = charge?.AdditionalChargeId;
-            }
+            var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
+                bookingId, mileage.ExcessKm, booking.OverageFeePerKm ?? 0, mileage.Fee, ct);
+            chargeId = charge?.AdditionalChargeId;
         }
 
         await _bookingRepository.UpdateStatusAsync(bookingId, "Returned", ["InProgress"], ct);
 
         return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
-            actualDistance,
+            mileage.ActualDistanceKm,
             booking.IncludedMileageKm,
-            excessKm,
+            mileage.ExcessKm,
             booking.OverageFeePerKm,
-            excessFee,
+            mileage.Fee,
             chargeId));
     }
 
@@ -535,31 +484,17 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         if (pickup is null || returnIns is null)
             return ServiceResult<ExcessMileageCalculationResponse>.Failure("INSPECTIONS_INCOMPLETE", "Chưa đủ biên bản nhận và trả xe để tính phí.");
 
-        var actualDistance = (returnIns.OdometerKm ?? 0) - (pickup.OdometerKm ?? 0);
-        decimal excessKm = 0;
-        decimal excessFee = 0;
-        Guid? chargeId = null;
-
-        if (booking.IncludedMileageKm.HasValue && booking.IncludedMileageKm.Value > 0 && actualDistance > booking.IncludedMileageKm.Value)
-        {
-            excessKm = actualDistance - booking.IncludedMileageKm.Value;
-            var feeRate = booking.OverageFeePerKm ?? 0;
-            excessFee = Math.Round(excessKm * feeRate, 0, MidpointRounding.AwayFromZero);
-
-            if (excessFee > 0)
-            {
-                var charge = await _bookingRepository.SaveExcessMileageChargeAsync(
-                    bookingId, excessKm, feeRate, excessFee, ct);
-                chargeId = charge?.AdditionalChargeId;
-            }
-        }
+        var mileage = MileagePricing.Calculate(pickup.OdometerKm ?? 0, returnIns.OdometerKm ?? 0,
+            booking.IncludedMileageKm, booking.OverageFeePerKm);
+        // GET is read-only: the return command is responsible for persisting charges.
+        var chargeId = booking.AdditionalCharges.FirstOrDefault(c => c.ReasonCode == "EXCESS_MILEAGE")?.AdditionalChargeId;
 
         return ServiceResult<ExcessMileageCalculationResponse>.Success(new ExcessMileageCalculationResponse(
-            actualDistance,
+            mileage.ActualDistanceKm,
             booking.IncludedMileageKm,
-            excessKm,
+            mileage.ExcessKm,
             booking.OverageFeePerKm,
-            excessFee,
+            mileage.Fee,
             chargeId));
     }
 

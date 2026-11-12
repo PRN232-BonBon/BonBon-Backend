@@ -34,4 +34,12 @@ public sealed record OwnerVehicleResponse(
     string PlateNumber,
     string Status,
     string? RejectionReason,
-    int ImageCount);
+    int ImageCount,
+    int? ProductionYear,
+    int Seats,
+    string Transmission,
+    string BodyType,
+    string PickupAddress,
+    decimal HourPrice,
+    decimal DayPrice,
+    string? CoverImageUrl);

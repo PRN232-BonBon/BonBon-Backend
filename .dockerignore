@@ -11,5 +11,9 @@
 !.env.example
 TestResults
 coverage
+**/.payment*.local.json
+**/appsettings.Local.json
+**/appsettings.Development.json
+**/secrets.json
 docs
 README.md

@@ -2,6 +2,7 @@ using System.Data;
 using BonBon.DataAccess.Repositories.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace BonBon.DataAccess.Repositories.Implementations;
 
@@ -113,7 +114,11 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
         {
             await using var command = new NpgsqlCommand("""
                 SELECT v.vehicle_id, v.brand, v.model, v.plate_number, v.status, v.rejection_reason,
-                       count(vi.vehicle_image_id)::integer
+                       count(vi.vehicle_image_id)::integer, v.production_year, v.seats, v.transmission,
+                       v.body_type, v.pickup_address, v.hour_price, v.day_price,
+                       (SELECT COALESCE(photo.image_url, '/api/vehicles/images/' || photo.vehicle_image_id::text)
+                        FROM bonbon.vehicle_image photo WHERE photo.vehicle_id = v.vehicle_id
+                        ORDER BY photo.is_cover DESC, photo.sort_order, photo.vehicle_image_id LIMIT 1)
                 FROM bonbon.vehicle v
                 LEFT JOIN bonbon.vehicle_image vi ON vi.vehicle_id = v.vehicle_id
                 WHERE v.owner_account_id = @owner_account_id
@@ -127,7 +132,10 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
             {
                 items.Add(new OwnerVehicle(
                     reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                    reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(6)));
+                    reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt32(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt16(7), reader.GetInt16(8), reader.GetString(9),
+                    reader.IsDBNull(10) ? "" : reader.GetString(10), reader.GetString(11), reader.GetDecimal(12), reader.GetDecimal(13),
+                    reader.IsDBNull(14) ? null : reader.GetString(14)));
             }
             return items;
         }
@@ -156,6 +164,34 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
         {
             if (shouldClose) await connection.CloseAsync();
         }
+    }
+
+    public async Task<IReadOnlyList<OwnerAvailabilityBlock>> GetOwnerBlocksAsync(
+        Guid ownerAccountId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = new NpgsqlCommand("""
+                SELECT ab.availability_block_id, ab.vehicle_id, ab.start_at, ab.end_at, ab.reason
+                FROM bonbon.availability_block ab
+                JOIN bonbon.vehicle v ON v.vehicle_id = ab.vehicle_id
+                WHERE v.owner_account_id = @owner AND ab.start_at < @end AND ab.end_at > @start
+                ORDER BY ab.start_at, ab.availability_block_id
+                """, connection);
+            command.Parameters.AddWithValue("owner", NpgsqlDbType.Uuid, ownerAccountId);
+            command.Parameters.AddWithValue("start", NpgsqlDbType.TimestampTz, startAt.ToUniversalTime());
+            command.Parameters.AddWithValue("end", NpgsqlDbType.TimestampTz, endAt.ToUniversalTime());
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var items = new List<OwnerAvailabilityBlock>();
+            while (await reader.ReadAsync(ct))
+                items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetFieldValue<DateTimeOffset>(2),
+                    reader.GetFieldValue<DateTimeOffset>(3), reader.IsDBNull(4) ? null : reader.GetString(4)));
+            return items;
+        }
+        finally { if (shouldClose) await connection.CloseAsync(); }
     }
 
     public async Task<IReadOnlyList<VehicleCatalogRecord>> SearchAsync(VehicleSearchFilter filter, CancellationToken ct = default)
@@ -209,15 +245,17 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
         try
         {
             await using var command = new NpgsqlCommand(sql, connection);
-            command.Parameters.AddWithValue("location", (object?)filter.Location ?? DBNull.Value);
-            command.Parameters.AddWithValue("seats", (object?)filter.Seats ?? DBNull.Value);
-            command.Parameters.AddWithValue("transmission", (object?)filter.Transmission ?? DBNull.Value);
-            command.Parameters.AddWithValue("fuel_type", (object?)filter.FuelType ?? DBNull.Value);
-            command.Parameters.AddWithValue("body_type", (object?)filter.BodyType ?? DBNull.Value);
-            command.Parameters.AddWithValue("min_price", (object?)filter.MinPrice ?? DBNull.Value);
-            command.Parameters.AddWithValue("max_price", (object?)filter.MaxPrice ?? DBNull.Value);
-            command.Parameters.AddWithValue("start_at", filter.StartAt.HasValue ? filter.StartAt.Value.ToUniversalTime() : DBNull.Value);
-            command.Parameters.AddWithValue("end_at", filter.EndAt.HasValue ? filter.EndAt.Value.ToUniversalTime() : DBNull.Value);
+            // PostgreSQL cannot infer a NULL parameter's type from "@parameter IS NULL".
+            // Keep the types explicit for both empty and partially populated filters.
+            command.Parameters.Add("location", NpgsqlDbType.Text).Value = (object?)filter.Location ?? DBNull.Value;
+            command.Parameters.Add("seats", NpgsqlDbType.Smallint).Value = (object?)filter.Seats ?? DBNull.Value;
+            command.Parameters.Add("transmission", NpgsqlDbType.Text).Value = (object?)filter.Transmission ?? DBNull.Value;
+            command.Parameters.Add("fuel_type", NpgsqlDbType.Text).Value = (object?)filter.FuelType ?? DBNull.Value;
+            command.Parameters.Add("body_type", NpgsqlDbType.Text).Value = (object?)filter.BodyType ?? DBNull.Value;
+            command.Parameters.Add("min_price", NpgsqlDbType.Numeric).Value = (object?)filter.MinPrice ?? DBNull.Value;
+            command.Parameters.Add("max_price", NpgsqlDbType.Numeric).Value = (object?)filter.MaxPrice ?? DBNull.Value;
+            command.Parameters.Add("start_at", NpgsqlDbType.TimestampTz).Value = (object?)filter.StartAt?.ToUniversalTime() ?? DBNull.Value;
+            command.Parameters.Add("end_at", NpgsqlDbType.TimestampTz).Value = (object?)filter.EndAt?.ToUniversalTime() ?? DBNull.Value;
 
             await using var reader = await command.ExecuteReaderAsync(ct);
             var results = new List<VehicleCatalogRecord>();

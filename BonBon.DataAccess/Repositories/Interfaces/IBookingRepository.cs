@@ -121,6 +121,7 @@ public sealed record OwnerBookingRecord(
 
 public interface IBookingRepository
 {
+    Task<BookingDecisionResult> DecideAsync(Guid ownerAccountId, Guid bookingId, BookingDecision decision, CancellationToken ct = default);
     Task<VehiclePricing?> GetVehiclePricingAsync(Guid vehicleId, CancellationToken ct = default);
     Task<bool> IsVehicleAvailableAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
     Task<bool> HasDuplicatePendingBookingAsync(Guid customerAccountId, Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
@@ -135,9 +136,6 @@ public interface IBookingRepository
     Task<BookingDetailRecord?> GetByIdAsync(Guid bookingId, CancellationToken ct = default);
     Task<IReadOnlyList<OwnerBookingRecord>> GetByOwnerAsync(Guid ownerAccountId, CancellationToken ct = default);
     Task<bool> CancelAsync(Guid bookingId, CancellationToken ct = default);
-    Task<bool> ApproveAsync(Guid bookingId, CancellationToken ct = default);
-    Task<bool> RejectAsync(Guid bookingId, CancellationToken ct = default);
-    Task<bool> ConfirmPaymentAsync(Guid bookingId, CancellationToken ct = default);
     Task<InspectionRecord?> GetInspectionAsync(Guid bookingId, string kind, CancellationToken ct = default);
     Task<IReadOnlyList<InspectionRecord>> GetInspectionsByBookingAsync(Guid bookingId, CancellationToken ct = default);
     Task<IReadOnlyList<AdditionalChargeRecord>> GetChargesByBookingAsync(Guid bookingId, CancellationToken ct = default);

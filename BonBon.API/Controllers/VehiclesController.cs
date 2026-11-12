@@ -87,6 +87,18 @@ public sealed class VehiclesController(
         return Ok(result.Data);
     }
 
+    [HttpGet("owner-blocks")]
+    [Authorize]
+    [ProducesResponseType(typeof(IReadOnlyList<OwnerAvailabilityBlock>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> OwnerBlocks([FromQuery] DateTimeOffset? startAt, [FromQuery] DateTimeOffset? endAt, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+        if (!startAt.HasValue || !endAt.HasValue || endAt <= startAt || endAt.Value - startAt.Value > TimeSpan.FromDays(31))
+            return ProblemResult("INVALID_CALENDAR_RANGE", "Vui lòng chọn khoảng lịch hợp lệ, tối đa 31 ngày.");
+        return Ok(await _vehicleRepository.GetOwnerBlocksAsync(accountId, startAt.Value, endAt.Value, ct));
+    }
+
     [HttpGet("images/{imageId:guid}")]
     [AllowAnonymous]
     [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Any)]
