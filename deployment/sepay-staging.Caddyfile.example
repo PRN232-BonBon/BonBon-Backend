@@ -35,7 +35,7 @@
     @testerList {
         remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
         method GET OPTIONS
-        path /api/vehicles /api/vehicles/images/* /api/bookings/mine /api/bookings/owner
+        path /api/vehicles /api/vehicles/images/* /api/vehicles/*/availability /api/bookings /api/bookings/mine /api/bookings/owner
     }
     @testerDetail {
         remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
@@ -45,7 +45,7 @@
     @testerCreate {
         remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
         method POST OPTIONS
-        path /api/auth/login /api/auth/refresh /api/auth/logout /api/bookings/quote /api/bookings/validate-window /api/bookings /api/payments
+        path /api/auth/login /api/auth/refresh /api/auth/logout /api/bookings/price-estimates /api/rentals/time-validations /api/bookings/quote /api/bookings/validate-window /api/bookings /api/payments
     }
     @testerDecision {
         remote_ip {$SEPAY_STAGING_TESTER_CIDRS}

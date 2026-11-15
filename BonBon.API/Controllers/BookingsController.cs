@@ -14,6 +14,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     private readonly IBookingService _bookingService = bookingService;
 
     [HttpPost("{bookingId:guid}/approve")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [Authorize(Roles = "VehicleOwner")]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status410Gone)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -24,6 +25,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     }
 
     [HttpPost("{bookingId:guid}/reject")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     [Authorize(Roles = "VehicleOwner")]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status410Gone)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -33,7 +35,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         return StatusCode(StatusCodes.Status410Gone, new ProblemDetails { Title = "MANUAL_APPROVAL_REMOVED", Detail = "Đơn thuê mới được chuyển thẳng sang thanh toán.", Status = StatusCodes.Status410Gone });
     }
 
-    [HttpPost("validate-window")]
+    [HttpPost("/api/rentals/time-validations")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(RentalWindowResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -43,7 +45,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 
-    [HttpPost("quote")]
+    [HttpPost("price-estimates")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(BookingQuoteResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -53,12 +55,12 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         return result.IsSuccess ? Ok(result.Data) : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 
-    [HttpGet("availability")]
+    [HttpGet("/api/vehicles/{vehicleId:guid}/availability")]
     [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Availability(
-        [FromQuery] Guid vehicleId,
+        [FromRoute] Guid vehicleId,
         [FromQuery] string rentalType,
         [FromQuery] DateTimeOffset startAt,
         [FromQuery] DateTimeOffset endAt,
@@ -89,7 +91,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         return Created($"/api/bookings/{result.Data!.BookingId}", result.Data);
     }
 
-    [HttpGet("mine")]
+    [NonAction]
     [Authorize]
     [ProducesResponseType(typeof(IReadOnlyList<CustomerBookingResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Mine(CancellationToken ct)
@@ -100,7 +102,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         return Ok(result.Data);
     }
 
-    [HttpGet("owner")]
+    [NonAction]
     [Authorize]
     [ProducesResponseType(typeof(IReadOnlyList<OwnerBookingResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> OwnerBookings(CancellationToken ct)
@@ -110,6 +112,35 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         var result = await _bookingService.GetOwnerBookingsAsync(accountId, ct);
         return Ok(result.Data);
     }
+
+    [HttpGet]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public Task<IActionResult> List([FromQuery] string? participantRole, CancellationToken ct) => participantRole switch
+    {
+        "customer" => Mine(ct),
+        "owner" => OwnerBookings(ct),
+        _ => Task.FromResult<IActionResult>(BookingProblem("INVALID_PARTICIPANT_ROLE", "Vui lòng chọn participantRole là customer hoặc owner.")),
+    };
+
+    // Backward-compatible routes for clients deployed before the resource-based API.
+    [HttpPost("validate-window"), AllowAnonymous, ApiExplorerSettings(IgnoreApi = true)]
+    public IActionResult LegacyValidateWindow([FromBody] RentalWindowRequest request) => ValidateWindow(request);
+
+    [HttpPost("quote"), AllowAnonymous, ApiExplorerSettings(IgnoreApi = true)]
+    public Task<IActionResult> LegacyQuote([FromBody] BookingQuoteRequest request, CancellationToken ct) => Quote(request, ct);
+
+    [HttpGet("availability"), AllowAnonymous, ApiExplorerSettings(IgnoreApi = true)]
+    public Task<IActionResult> LegacyAvailability([FromQuery] Guid vehicleId, [FromQuery] string rentalType,
+        [FromQuery] DateTimeOffset startAt, [FromQuery] DateTimeOffset endAt, CancellationToken ct) =>
+        Availability(vehicleId, rentalType, startAt, endAt, ct);
+
+    [HttpGet("mine"), Authorize, ApiExplorerSettings(IgnoreApi = true)]
+    public Task<IActionResult> LegacyMine(CancellationToken ct) => Mine(ct);
+
+    [HttpGet("owner"), Authorize, ApiExplorerSettings(IgnoreApi = true)]
+    public Task<IActionResult> LegacyOwnerBookings(CancellationToken ct) => OwnerBookings(ct);
 
     [HttpGet("{id:guid}")]
     [Authorize]

@@ -65,7 +65,7 @@ public class PaymentStagingReadinessTests
         }
         foreach(var origin in new[]{"http://127.0.0.1:5289","https://attacker.invalid"})
         {
-            using var request=new HttpRequestMessage(HttpMethod.Options,"http://127.0.0.1:5288/api/bookings/mine");
+            using var request=new HttpRequestMessage(HttpMethod.Options,"http://127.0.0.1:5288/api/bookings?participantRole=customer");
             request.Headers.Add("Origin",origin); request.Headers.Add("Access-Control-Request-Method","GET");
             request.Headers.Add("Access-Control-Request-Headers","authorization");
             using var response=await client.SendAsync(request);

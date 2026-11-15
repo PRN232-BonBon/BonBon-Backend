@@ -22,7 +22,7 @@
     @testerGet {
         remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}
         method GET
-        path /api/bookings/mine
+        path /api/bookings /api/bookings/mine
     }
     @testerPayment {
         remote_ip {$PAYMENT_STAGING_OPERATOR_CIDRS}

@@ -82,7 +82,7 @@ FROM bonbon.payment p JOIN bonbon.booking b USING(booking_id) WHERE p.payment_id
   Check ([bool](Read-Scalar "SELECT EXISTS(SELECT 1 FROM bonbon.vehicle WHERE vehicle_id=@vehicle AND owner_account_id=@owner AND plate_number LIKE 'LOCAL-IPN-%' AND status='Available')" @{vehicle=$vehicle;owner=[guid]$accounts.OwnerId})) 'Synthetic vehicle rejected.'
   $start=[DateTimeOffset]::new([DateTime]::UtcNow.Date.AddDays(70).AddHours(2),[TimeSpan]::Zero)
   $request=@{vehicleId=$vehicle.ToString();rentalType='Daily';startAt=$start.ToString('o');endAt=$start.AddDays(2).ToString('o')}
-  $quote=Post '/api/bookings/quote' $customer $request
+  $quote=Post '/api/bookings/price-estimates' $customer $request
   Check ($quote.quotedRentalAmount -eq 1300000) 'Unexpected fresh quote.'
   $booking=Post '/api/bookings' $customer $request
   Check ($booking.status -eq 'PendingApproval') 'Booking did not start PendingApproval.'

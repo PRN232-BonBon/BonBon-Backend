@@ -107,7 +107,7 @@ public class PaymentStagingSmokeTests(ITestOutputHelper output)
             {
                 var start=new DateTimeOffset(DateTime.UtcNow.Date.AddDays(14).AddHours(2),TimeSpan.Zero);
                 var request=new {vehicleId=accounts.VehicleId,rentalType="Daily",startAt=start,endAt=start.AddDays(2)};
-                var quote=await JsonAsync(await client.PostAsJsonAsync("/api/bookings/quote",request),HttpStatusCode.OK);
+                var quote=await JsonAsync(await client.PostAsJsonAsync("/api/bookings/price-estimates",request),HttpStatusCode.OK);
                 Assert.Equal(1300000m,quote.GetProperty("quotedRentalAmount").GetDecimal());
                 var booking=await JsonAsync(await client.PostAsJsonAsync("/api/bookings",request),HttpStatusCode.Created);
                 accounts.BookingId=booking.GetProperty("bookingId").GetGuid(); Assert.Equal("PendingApproval",booking.GetProperty("status").GetString());
@@ -120,15 +120,15 @@ public class PaymentStagingSmokeTests(ITestOutputHelper output)
         var approved=await JsonAsync(await client.PostAsync($"/api/bookings/{accounts.BookingId}/approve",null),HttpStatusCode.OK);
         Assert.Equal("AwaitingPayment",approved.GetProperty("status").GetString()); Assert.Equal(1300000m,approved.GetProperty("quotedRentalAmount").GetDecimal());
         client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",customerToken);
-        var mine=await JsonAsync(await client.GetAsync("/api/bookings/mine"),HttpStatusCode.OK);
+        var mine=await JsonAsync(await client.GetAsync("/api/bookings?participantRole=customer"),HttpStatusCode.OK);
         Assert.Contains(mine.EnumerateArray(),x=>x.GetProperty("bookingId").GetGuid()==accounts.BookingId && x.GetProperty("status").GetString()=="AwaitingPayment");
         client.DefaultRequestHeaders.Add("Idempotency-Key","staging_preparation_disabled_0001");
         var unavailable=await JsonAsync(await client.PostAsJsonAsync("/api/payments",new {bookingId=accounts.BookingId}),HttpStatusCode.ServiceUnavailable);
         Assert.Equal("PAYMENT_DISABLED",unavailable.GetProperty("title").GetString());
         Assert.Equal(0L,await ScalarAsync<long>(connection,"SELECT count(*) FROM bonbon.payment WHERE booking_id=@id",("id",accounts.BookingId)));
         client.DefaultRequestHeaders.Authorization=null;
-        Assert.Equal(HttpStatusCode.Unauthorized,(await client.GetAsync("/api/bookings/mine")).StatusCode);
-        using(var preflight=new HttpRequestMessage(HttpMethod.Options,"/api/bookings/mine"))
+        Assert.Equal(HttpStatusCode.Unauthorized,(await client.GetAsync("/api/bookings?participantRole=customer")).StatusCode);
+        using(var preflight=new HttpRequestMessage(HttpMethod.Options,"/api/bookings?participantRole=customer"))
         {
             preflight.Headers.Add("Origin","http://127.0.0.1:5289"); preflight.Headers.Add("Access-Control-Request-Method","GET"); preflight.Headers.Add("Access-Control-Request-Headers","authorization");
             using var response=await client.SendAsync(preflight); Assert.Equal("http://127.0.0.1:5289",response.Headers.GetValues("Access-Control-Allow-Origin").Single());
