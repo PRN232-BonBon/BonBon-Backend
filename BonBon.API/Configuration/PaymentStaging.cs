@@ -2,6 +2,7 @@ using BonBon.Business.Configuration;
 using Npgsql;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.FileProviders.Physical;
+using System.Net;
 
 namespace BonBon.API.Configuration;
 
@@ -24,8 +25,26 @@ public static class PaymentStaging
             Path.GetFileName(path),optional:false,reloadOnChange:false);
     }
 
+    public static IPAddress[] TrustedProxyAddresses(IConfiguration configuration)
+    {
+        var addresses=configuration.GetSection("PaymentStaging:TrustedProxyAddresses").Get<string[]>()??[];
+        if(addresses.Length>8) throw new InvalidOperationException("Staging proxy trust must be a small explicit IP allowlist.");
+        return addresses.Select(value=>
+        {
+            if(!IPAddress.TryParse(value,out var ip) || ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any))
+                throw new InvalidOperationException("Staging requires exact proxy IPs, never CIDR ranges or wildcard trust.");
+            return ip;
+        }).ToArray();
+    }
+
     public static string ValidateConfiguration(IConfiguration configuration)
     {
+        if(SePayStaging.IsSelected(configuration)) return SePayStaging.ValidateConfiguration(configuration);
+        if(!string.IsNullOrEmpty(configuration["PaymentStaging:DatabaseProfile"]))
+            throw new InvalidOperationException("Unknown staging database profile.");
+        if(configuration.GetValue<bool>("PaymentLocal:IpnSimulationEnabled"))
+            throw new InvalidOperationException("Local IPN simulation must never be enabled in PaymentStaging.");
+        _=TrustedProxyAddresses(configuration);
         var raw=configuration.GetConnectionString("DefaultConnection");
         if(string.IsNullOrWhiteSpace(raw)) throw new InvalidOperationException("Staging requires an explicit test connection.");
         var connection=new NpgsqlConnectionStringBuilder(raw);
@@ -46,6 +65,8 @@ public static class PaymentStaging
                 || origin.HostNameType!=UriHostNameType.Dns || origin.IsLoopback || !origin.IsDefaultPort
                 || origin.UserInfo!="" || origin.AbsolutePath!="/" || origin.Query!="" || origin.Fragment!=""
                 || origin.Host.Equals("bonbon.kitsuracloud.com",StringComparison.OrdinalIgnoreCase)
+                || origin.Host.Equals("bonbon-api.kitsuracloud.com",StringComparison.OrdinalIgnoreCase)
+                || origin.Host.Equals("bonbon-admin.kitsuracloud.com",StringComparison.OrdinalIgnoreCase)
                 || origin.Host.EndsWith(".bonbon.kitsuracloud.com",StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("A dedicated HTTPS staging origin is required; production is forbidden.");
             if(configuration["VnPay:ReturnUrl"]!=new Uri(origin,"/api/payments/vnpay/return/redirect").AbsoluteUri
@@ -70,11 +91,22 @@ public static class PaymentStaging
                 || configuration["PaymentStaging:IpnUrl"]!=new Uri(origin,"/api/payments/vnpay/ipn").AbsoluteUri)
                 throw new InvalidOperationException("Payment stays blocked until genuine merchant and fixed HTTPS callbacks are verified.");
         }
+
+        if(configuration.GetValue<bool>("SePay:Enabled")) {
+            var sepay=configuration.GetSection("SePay").Get<SePayOptions>()??new();
+            if(!sepay.IsValid() || origin is null || new Uri(sepay.PublicOrigin).GetLeftPart(UriPartial.Authority)!=origin.GetLeftPart(UriPartial.Authority)
+                || sepay.FrontendResultUrl!=new Uri(origin,"/payment/result").AbsoluteUri
+                || !configuration.GetValue<bool>("PaymentStaging:SePayMerchantVerified")
+                || !configuration.GetValue<bool>("PaymentStaging:SePayCallbacksVerified")
+                || !configuration.GetValue<bool>("PaymentStaging:SePayReconciliationPlanVerified"))
+                throw new InvalidOperationException("SePay staging requires its own verified merchant/callback/reconciliation gates and dedicated origin.");
+        }
         return connection.ConnectionString;
     }
 
     public static NpgsqlDataSource CreateDataSource(IConfiguration configuration)
     {
+        if(SePayStaging.IsSelected(configuration)) return SePayStaging.CreateDataSource(configuration);
         var builder=new NpgsqlDataSourceBuilder(ValidateConfiguration(configuration));
         // Applies to physical connections opened by EF AND raw GetDbConnection()
         // repository calls. No migration or data write is performed by this guard.
@@ -83,6 +115,11 @@ public static class PaymentStaging
             async connection=>{ await using var command=IdentityCommand(connection); await using var reader=await command.ExecuteReaderAsync(); await VerifyAsync(reader,CancellationToken.None); });
         return builder.Build();
     }
+
+    public static Task VerifyConfiguredSchemaAsync(NpgsqlDataSource source,IConfiguration config,CancellationToken ct=default) =>
+        SePayStaging.IsSelected(config) ? SePayStaging.VerifySchemaAsync(source,ct) : VerifySchemaAsync(source,ct);
+
+    public static string ConfiguredDatabase(IConfiguration config) => SePayStaging.IsSelected(config) ? SePayStaging.Database : Database;
 
     private static NpgsqlCommand IdentityCommand(NpgsqlConnection connection)=>new("""
         SELECT current_database(),current_user,session_user,pg_get_userbyid(d.datdba),

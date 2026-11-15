@@ -209,4 +209,26 @@ public class PaymentServiceTests
     private Moq.Language.Flow.ISetup<IPaymentRepository, Task<PaymentCreateResult>> SetupCreation() =>
         _repository.Setup(x => x.CreateAsync(PaymentTestData.Customer, PaymentTestData.Booking, Key, PaymentTestData.Now,
             TimeSpan.FromMinutes(15), It.IsAny<Func<PaymentAttempt, string>>(), default));
+
+    [Fact]
+    public async Task Connection_failures_return_unavailable_without_exposing_transport_detail()
+    {
+        var service=Service();
+        SetupCreation().ThrowsAsync(new Npgsql.NpgsqlException("synthetic transport detail"));
+        var result=await service.CreateAsync(PaymentTestData.Customer,new(PaymentTestData.Booking),Key,"127.0.0.1");
+        Assert.Equal("PAYMENT_TEMPORARILY_UNAVAILABLE",result.ErrorCode);
+        Assert.DoesNotContain("synthetic transport detail",result.ErrorMessage!);
+    }
+
+    [Fact]
+    public async Task Ipn_schema_or_connection_failure_never_acknowledges_success()
+    {
+        var service=Service();
+        _gateway.Setup(x=>x.Verify(Query)).Returns(new PaymentVerification(true,Notification:PaymentTestData.Notification));
+        _repository.SetupSequence(x=>x.ProcessNotificationAsync(PaymentTestData.Notification,PaymentTestData.Now,
+            It.IsAny<Func<PaymentNotificationContext,PaymentNotificationDecision>>(),default))
+            .ThrowsAsync(new PaymentSchemaUnavailableException()).ThrowsAsync(new Npgsql.NpgsqlException("synthetic transport detail"));
+        Assert.Equal("99",(await service.HandleIpnAsync(Query)).RspCode);
+        Assert.Equal("99",(await service.HandleIpnAsync(Query)).RspCode);
+    }
 }

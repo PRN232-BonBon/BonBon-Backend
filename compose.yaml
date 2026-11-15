@@ -48,6 +48,16 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       Payment__Enabled: ${PAYMENT_ENABLED:-false}
       Payment__CheckoutMinutes: ${PAYMENT_CHECKOUT_MINUTES:-15}
+      SePay__Enabled: ${SePay__Enabled:-false}
+      SePay__AllowDemoProduction: ${SePay__AllowDemoProduction:-false}
+      SePay__MerchantId: ${SePay__MerchantId:-}
+      SePay__MerchantSecretKey: ${SePay__MerchantSecretKey:-}
+      SePay__IpnSecretKey: ${SePay__IpnSecretKey:-}
+      SePay__SandboxCheckoutUrl: ${SePay__SandboxCheckoutUrl:-https://pay-sandbox.sepay.vn/v1/checkout/init}
+      SePay__SandboxApiBaseUrl: ${SePay__SandboxApiBaseUrl:-https://pgapi-sandbox.sepay.vn}
+      SePay__PublicOrigin: ${SePay__PublicOrigin:-}
+      SePay__ReturnUrl: ${SePay__ReturnUrl:-}
+      SePay__FrontendResultUrl: ${SePay__FrontendResultUrl:-}
       VnPay__TmnCode: ${VNPAY_TMN_CODE:-}
       VnPay__HashSecret: ${VNPAY_HASH_SECRET:-}
       VnPay__ReturnUrl: ${VNPAY_RETURN_URL:-}

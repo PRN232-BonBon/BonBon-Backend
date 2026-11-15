@@ -25,7 +25,14 @@ BEGIN
         OR NEW.billable_units IS DISTINCT FROM OLD.billable_units
         OR NEW.start_at IS DISTINCT FROM OLD.start_at
         OR NEW.end_at IS DISTINCT FROM OLD.end_at
-        OR NEW.unit_price_snapshot IS DISTINCT FROM OLD.unit_price_snapshot) THEN
+        OR NEW.unit_price_snapshot IS DISTINCT FROM OLD.unit_price_snapshot
+        -- JSONB also supports the older baseline where 006 snapshot columns do
+        -- not exist. Never compare generated quoted_rental_amount in BEFORE UPDATE.
+        OR (to_jsonb(NEW)->'weekly_discount_percent_snapshot') IS DISTINCT FROM (to_jsonb(OLD)->'weekly_discount_percent_snapshot')
+        OR (to_jsonb(NEW)->'discount_amount_snapshot') IS DISTINCT FROM (to_jsonb(OLD)->'discount_amount_snapshot')
+        OR (to_jsonb(NEW)->'included_mileage_km_snapshot') IS DISTINCT FROM (to_jsonb(OLD)->'included_mileage_km_snapshot')
+        OR (to_jsonb(NEW)->'overage_fee_per_km_snapshot') IS DISTINCT FROM (to_jsonb(OLD)->'overage_fee_per_km_snapshot')
+        OR (to_jsonb(NEW)->'rental_terms_snapshot') IS DISTINCT FROM (to_jsonb(OLD)->'rental_terms_snapshot')) THEN
         RAISE EXCEPTION 'Decided booking time and price are immutable' USING ERRCODE='23514';
     END IF;
     RETURN NEW;

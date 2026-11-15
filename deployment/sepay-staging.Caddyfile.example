@@ -1,0 +1,91 @@
+# Dedicated staging host, direct Internet edge (not CDN/tunnel). No production DNS/routing.
+# Validate tester CIDRs independently; callbacks must not be restricted to tester IPs.
+{
+    admin off
+}
+(backend) {
+    reverse_proxy api:8080 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up -X-Forwarded-Host
+        transport http {
+            dial_timeout 3s
+            response_header_timeout 20s
+        }
+    }
+}
+{$SEPAY_STAGING_API_HOST} {
+    header {
+        Referrer-Policy "no-referrer"
+        Cache-Control "no-store"
+        X-Content-Type-Options "nosniff"
+    }
+    # No access logs containing query, Authorization, X-Secret-Key or request bodies.
+    log {
+        output discard
+    }
+    @ipn {
+        method POST
+        path /api/payments/sepay/ipn
+    }
+    @return {
+        method GET
+        path /api/payments/sepay/return
+    }
+    @testerList {
+        remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
+        method GET OPTIONS
+        path /api/vehicles /api/vehicles/images/* /api/bookings/mine /api/bookings/owner
+    }
+    @testerDetail {
+        remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
+        method GET OPTIONS
+        path_regexp detail ^/api/(bookings|payments)/[0-9a-fA-F-]{36}$
+    }
+    @testerCreate {
+        remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
+        method POST OPTIONS
+        path /api/auth/login /api/auth/refresh /api/auth/logout /api/bookings/quote /api/bookings/validate-window /api/bookings /api/payments
+    }
+    @testerDecision {
+        remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
+        method POST OPTIONS
+        path_regexp decision ^/api/bookings/[0-9a-fA-F-]{36}/(approve|reject)$
+    }
+    @operatorReconcile {
+        remote_ip {$SEPAY_STAGING_TESTER_CIDRS}
+        method POST OPTIONS
+        path_regexp reconcile ^/api/payments/sepay/[0-9a-fA-F-]{36}/reconcile$
+    }
+    route {
+        handle @ipn {
+            request_body {
+                max_size 32768
+            }
+            import backend
+        }
+        handle @return {
+            import backend
+        }
+        handle @testerList {
+            import backend
+        }
+        handle @testerDetail {
+            import backend
+        }
+        handle @testerCreate {
+            request_body {
+                max_size 65536
+            }
+            import backend
+        }
+        handle @testerDecision {
+            import backend
+        }
+        handle @operatorReconcile {
+            import backend
+        }
+        # Includes /health, /swagger, admin, tracking, simulator and unknown /api routes.
+        respond 404
+    }
+}

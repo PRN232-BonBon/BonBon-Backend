@@ -32,5 +32,7 @@
     <None Include="../database/seeds/payment_sample.sql" Link="Sql/payment_sample.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/004_vnpay_sandbox.sql" Link="Sql/004_vnpay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/005_booking_quote_guard.sql" Link="Sql/005_booking_quote_guard.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/proposals/006_momo_sandbox.sql" Link="Sql/006_momo_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/proposals/007_sepay_sandbox.sql" Link="Sql/007_sepay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

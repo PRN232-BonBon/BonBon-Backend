@@ -11,6 +11,18 @@ public class PaymentStagingSafetyTests
         ["PaymentStaging:ExpectedDatabaseHost"]="db.example.test",
         ["Jwt:Key"]=new string('X',64),["Jwt:Issuer"]="BonBon.PaymentStaging",["Jwt:Audience"]="BonBon.PaymentStaging.Web",["Payment:Enabled"]="false" };
     private static IConfiguration Config(Dictionary<string,string?> settings)=>new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+    [Fact] public void Staging_cannot_accept_a_local_simulator_flag_even_when_payment_is_off()
+    { var settings=Settings();settings["PaymentLocal:IpnSimulationEnabled"]="true";Assert.Throws<InvalidOperationException>(()=>PaymentStaging.ValidateConfiguration(Config(settings))); }
+    [Theory]
+    [InlineData("0.0.0.0")]
+    [InlineData("::")]
+    [InlineData("10.0.0.0/8")]
+    [InlineData("*")]
+    public void Stage_proxy_trust_cannot_be_broad(string address)
+    {var settings=Settings();settings["PaymentStaging:TrustedProxyAddresses:0"]=address;Assert.Throws<InvalidOperationException>(()=>PaymentStaging.ValidateConfiguration(Config(settings)));}
+    [Fact]
+    public void Stage_allows_an_exact_operator_approved_proxy_address()
+    {var settings=Settings();settings["PaymentStaging:TrustedProxyAddresses:0"]="192.0.2.10";Assert.Single(PaymentStaging.TrustedProxyAddresses(Config(settings)));PaymentStaging.ValidateConfiguration(Config(settings));}
     [Fact] public void Disabled_stage_accepts_only_fixed_test_target_without_merchant()
     { Assert.Equal(PaymentStaging.Database,new NpgsqlConnectionStringBuilder(PaymentStaging.ValidateConfiguration(Config(Settings()))).Database); }
     [Theory]
@@ -50,8 +62,22 @@ public class PaymentStagingSafetyTests
     }
     [Fact] public void Prepared_https_can_be_validated_without_enabling_payment_or_merchant()
     { PaymentStaging.ValidateConfiguration(Config(HttpsSettings())); }
+    [Fact] public void SePay_requires_provider_specific_readiness_not_legacy_verified_flags()
+    {
+        var s=HttpsSettings();var o=SePayTestData.Options;
+        s["SePay:Enabled"]="true";s["SePay:MerchantId"]=o.MerchantId;s["SePay:MerchantSecretKey"]=o.MerchantSecretKey;s["SePay:IpnSecretKey"]=o.IpnSecretKey;
+        s["SePay:PublicOrigin"]="https://payment-stage.example.net";s["SePay:ReturnUrl"]="https://payment-stage.example.net/api/payments/sepay/return";s["SePay:FrontendResultUrl"]="https://payment-stage.example.net/payment/result";
+        s["PaymentStaging:MerchantVerified"]="true";s["PaymentStaging:CallbacksVerified"]="true";s["PaymentStaging:ReconciliationPlanVerified"]="true";
+        Assert.Throws<InvalidOperationException>(()=>PaymentStaging.ValidateConfiguration(Config(s)));
+        s["PaymentStaging:SePayMerchantVerified"]="true";s["PaymentStaging:SePayCallbacksVerified"]="true";s["PaymentStaging:SePayReconciliationPlanVerified"]="true";
+        PaymentStaging.ValidateConfiguration(Config(s));
+        s["SePay:PublicOrigin"]="https://different-stage.example.net";s["SePay:ReturnUrl"]="https://different-stage.example.net/api/payments/sepay/return";
+        Assert.Throws<InvalidOperationException>(()=>PaymentStaging.ValidateConfiguration(Config(s)));
+    }
     [Theory]
     [InlineData("https://bonbon.kitsuracloud.com")]
+    [InlineData("https://bonbon-api.kitsuracloud.com")]
+    [InlineData("https://bonbon-admin.kitsuracloud.com")]
     [InlineData("https://stage.bonbon.kitsuracloud.com")]
     [InlineData("http://payment-stage.example.net")]
     [InlineData("https://127.0.0.1")]

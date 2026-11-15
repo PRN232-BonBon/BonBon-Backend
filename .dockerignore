@@ -17,3 +17,5 @@ coverage
 **/secrets.json
 docs
 README.md
+# Desktop provisioning/simulation scripts are not needed to build or run the API.
+tools

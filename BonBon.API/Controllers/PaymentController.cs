@@ -12,7 +12,7 @@ namespace BonBon.API.Controllers;
 [Route("api/payments")]
 [Produces("application/json")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class PaymentController(IPaymentService payments, IOptions<PaymentReturnOptions> returnOptions) : ControllerBase
+public sealed class PaymentController(IPaymentService payments, IOptions<PaymentReturnOptions> returnOptions, ISePayCheckoutService? sepay = null) : ControllerBase
 {
     [HttpPost]
     [Authorize(Roles = "Customer")]
@@ -24,21 +24,27 @@ public sealed class PaymentController(IPaymentService payments, IOptions<Payment
         if (Request.Headers["Idempotency-Key"].Count != 1) return PaymentProblem("PAYMENT_REQUEST_INVALID", "Cần đúng một Idempotency-Key.");
         var ip = HttpContext.Connection.RemoteIpAddress;
         if (ip?.IsIPv4MappedToIPv6 == true) ip = ip.MapToIPv4();
-        var result = await payments.CreateAsync(customer, request, idempotencyKey ?? "", ip?.ToString() ?? "", ct);
-        return result.IsSuccess ? Ok(result.Data) : PaymentProblem(result.ErrorCode!, result.ErrorMessage!);
+        if (request.Provider == "SEPAY_SANDBOX" && sepay is not null) {
+            var checkout = await sepay.CreateAsync(customer, request, idempotencyKey ?? "", ip?.ToString() ?? "", ct);
+            return checkout.IsSuccess ? Ok(checkout.Data) : PaymentProblem(checkout.ErrorCode!, checkout.ErrorMessage!);
+        }
+        return PaymentProblem("PAYMENT_REQUEST_INVALID", "Provider không được hỗ trợ.");
     }
 
     [HttpGet("{paymentId:guid}")]
     [Authorize(Roles = "Customer")]
     [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Get(Guid paymentId, CancellationToken ct)
+    public async Task<IActionResult> Get(Guid paymentId, CancellationToken ct, [FromQuery] string provider = "SEPAY_SANDBOX")
     {
         if (!TryAccount(out var customer)) return Unauthorized();
-        var result = await payments.GetAsync(customer, paymentId, ct);
-        return result.IsSuccess ? Ok(result.Data) : PaymentProblem(result.ErrorCode!, result.ErrorMessage!);
+        if (provider == "SEPAY_SANDBOX" && sepay is not null) {
+            var payment = await sepay.GetAsync(customer, paymentId, ct);
+            return payment.IsSuccess ? Ok(payment.Data) : PaymentProblem(payment.ErrorCode!, payment.ErrorMessage!);
+        }
+        return PaymentProblem("PAYMENT_REQUEST_INVALID", "Provider không được hỗ trợ.");
     }
 
-    [HttpGet("vnpay/ipn")]
+    [NonAction]
     [AllowAnonymous]
     public async Task<IActionResult> Ipn(CancellationToken ct)
     {
@@ -46,7 +52,7 @@ public sealed class PaymentController(IPaymentService payments, IOptions<Payment
         return Ok(await payments.HandleIpnAsync(parameters, ct));
     }
 
-    [HttpGet("vnpay/return")]
+    [NonAction]
     [AllowAnonymous]
     public async Task<IActionResult> Return(CancellationToken ct)
     {
@@ -55,7 +61,7 @@ public sealed class PaymentController(IPaymentService payments, IOptions<Payment
         return result.IsSuccess ? Ok(result.Data) : PaymentProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 
-    [HttpGet("vnpay/return/redirect")]
+    [NonAction]
     [AllowAnonymous]
     public async Task<IActionResult> ReturnRedirect(CancellationToken ct)
     {

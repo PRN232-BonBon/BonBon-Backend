@@ -1,0 +1,17 @@
+{
+  "ConnectionStrings": { "DefaultConnection": "" },
+  "Jwt": { "Key": "", "Issuer": "BonBon.PaymentStaging", "Audience": "BonBon.PaymentStaging.Web", "ExpiryMinutes": 30, "RefreshTokenDays": 1 },
+  "Payment": { "Enabled": false, "CheckoutMinutes": 15 },
+  "PaymentLocal": { "IpnSimulationEnabled": false },
+  "PaymentStaging": {
+    "ExpectedDatabaseHost": "",
+    "TrustedProxyAddresses": [],
+    "PublicOrigin": "https://payment-sandbox.example.test",
+    "IpnUrl": "https://payment-sandbox.example.test/api/payments/vnpay/ipn",
+    "MerchantVerified": false, "CallbacksVerified": false, "ReconciliationPlanVerified": false
+  },
+  "VnPay": { "PaymentUrl": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html", "TmnCode": "", "HashSecret": "", "ReturnUrl": "https://payment-sandbox.example.test/api/payments/vnpay/return/redirect" },
+  "PaymentReturn": { "FrontendResultUrl": "https://payment-sandbox.example.test/payment/result" },
+  "AllowedHosts": "payment-sandbox.example.test;localhost;127.0.0.1",
+  "Logging": { "LogLevel": { "Default": "Warning", "Microsoft.AspNetCore": "Warning", "Microsoft.EntityFrameworkCore.Database.Command": "Warning" } }
+}

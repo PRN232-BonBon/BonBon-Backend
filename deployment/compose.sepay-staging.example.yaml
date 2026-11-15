@@ -1,0 +1,106 @@
+# REVIEW ONLY. Separate VM/host and project. Never combine with production compose files.
+# No migration/initdb mounts; DBA provisions the empty dedicated database separately.
+name: bonbon-sepay-staging
+services:
+  sepay-postgres:
+    image: ${SEPAY_STAGING_POSTGRES_IMAGE:?Pin reviewed PostgreSQL 16.15 image by digest}
+    restart: "no"
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: bonbon_sepay_cluster_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/cluster_admin_password
+      TZ: UTC
+    secrets:
+      - cluster_admin_password
+    command: ["postgres", "-c", "max_connections=20", "-c", "shared_buffers=64MB", "-c", "work_mem=4MB"]
+    volumes:
+      - staging_database:/var/lib/postgresql/data
+    networks:
+      data:
+        ipv4_address: 172.30.92.2
+    # Deliberately no published port, host network, production volume or init scripts.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bonbon_sepay_cluster_admin -d postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    mem_limit: 512m
+    logging: &bounded_logs
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+  api:
+    image: ${SEPAY_STAGING_API_IMAGE:?Pin the reviewed Backend image by digest}
+    restart: "no"
+    environment:
+      ASPNETCORE_ENVIRONMENT: PaymentStaging
+      DOTNET_ENVIRONMENT: PaymentStaging
+      ASPNETCORE_URLS: http://+:8080
+      DOTNET_EnableDiagnostics: "0"
+      BONBON_PAYMENT_STAGING_CONFIG: /run/secrets/staging_config
+      BONBON_SEPAY_CONFIG: /run/secrets/sepay_config
+      PaymentStaging__DatabaseProfile: SePayDedicated
+      Payment__Enabled: "false"
+      PaymentLocal__IpnSimulationEnabled: "false"
+    secrets:
+      - staging_config
+      - sepay_config
+    depends_on:
+      sepay-postgres: { condition: service_healthy }
+    networks:
+      edge: { ipv4_address: 172.30.91.3 }
+      data: { ipv4_address: 172.30.92.3 }
+    # API is reachable only from this project's edge; never publish 8080/5288.
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --output /dev/null http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 256m
+    logging: *bounded_logs
+
+  edge:
+    image: ${SEPAY_STAGING_CADDY_IMAGE:?Pin a reviewed Caddy image by digest}
+    restart: "no"
+    environment:
+      SEPAY_STAGING_API_HOST: ${SEPAY_STAGING_API_HOST:?An administrator must approve and verify the DNS hostname}
+      SEPAY_STAGING_TESTER_CIDRS: ${SEPAY_STAGING_TESTER_CIDRS:?Use exact approved tester /32 or /128 addresses}
+    volumes:
+      - type: bind
+        source: ${SEPAY_STAGING_CADDY_FILE:?Absolute reviewed Caddyfile path}
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - staging_certificates:/data
+      - staging_caddy_config:/config
+    networks:
+      edge: { ipv4_address: 172.30.91.2 }
+    ports: ["80:80", "443:443"]
+    # Separate staging host ONLY: never start this beside the production edge on the same ports.
+    mem_limit: 128m
+    logging: *bounded_logs
+
+networks:
+  edge:
+    ipam: { config: [{ subnet: "172.30.91.0/24" }] }
+  data:
+    internal: true
+    ipam: { config: [{ subnet: "172.30.92.0/24" }] }
+
+# Deliberate explicit provisioning: DBA verifies ownership/labels before creating or selecting these volumes.
+volumes:
+  staging_database: { external: true, name: bonbon-sepay-staging-postgres }
+  staging_certificates: { external: true, name: bonbon-sepay-staging-caddy-data }
+  staging_caddy_config: { external: true, name: bonbon-sepay-staging-caddy-config }
+
+secrets:
+  cluster_admin_password:
+    file: ${SEPAY_STAGING_CLUSTER_SECRET_FILE:?Private absolute path outside Git}
+  staging_config:
+    file: ${SEPAY_STAGING_CONFIG_FILE:?Private absolute JSON path outside Git}
+  sepay_config:
+    file: ${SEPAY_STAGING_MERCHANT_FILE:?Private absolute SePay JSON path outside Git}
