@@ -70,7 +70,7 @@ public class AuthService(
             return ServiceResult<AuthResponse>.Failure(
                 "INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.");
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, account.PasswordHash))
+        if (!VerifyPassword(request.Password, account.PasswordHash))
             return ServiceResult<AuthResponse>.Failure(
                 "INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng.");
 
@@ -116,12 +116,14 @@ public class AuthService(
 
         if (account is null)
         {
-            // Tạo tài khoản mới qua Google — không có password
+            // Tạo tài khoản mới qua Google — KHÔNG có mật khẩu local.
+            // PasswordHash phải để null: tài khoản Google-only không đăng nhập được
+            // bằng email/mật khẩu cho tới khi đặt mật khẩu qua luồng riêng.
             account = new Account
             {
                 AccountId   = Guid.NewGuid(),
                 Email       = email,
-                PasswordHash = "Pass_xai_tam_de_demo_syabau",
+                PasswordHash = null,
                 FullName    = payload.Name ?? email,
                 DisplayName = payload.GivenName,
                 Status      = "Active",
@@ -164,8 +166,8 @@ public class AuthService(
     public async Task<ServiceResult<AuthResponse>> RefreshAsync(
         RefreshTokenRequest request, CancellationToken ct = default)
     {
-        var tokenHash     = HashToken(request.RefreshToken);
-        var storedToken   = await _refreshTokenRepo.GetByHashAsync(tokenHash, ct);
+        var tokenHash   = HashToken(request.RefreshToken);
+        var storedToken = await _refreshTokenRepo.GetByHashAsync(tokenHash, ct);
 
         if (storedToken is null || !storedToken.IsActive)
             return ServiceResult<AuthResponse>.Failure(
@@ -175,9 +177,6 @@ public class AuthService(
             return ServiceResult<AuthResponse>.Failure(
                 "ACCOUNT_INACTIVE", "Tài khoản đã bị khoá hoặc vô hiệu hoá.");
 
-        // Rotate: revoke token cũ, cấp token mới
-        await _refreshTokenRepo.RevokeAsync(storedToken, ct);
-
         var account = await _accountRepo.GetByIdWithRolesAsync(storedToken.AccountId, ct)
             ?? throw new InvalidOperationException("Account not found during token refresh.");
 
@@ -185,12 +184,42 @@ public class AuthService(
             .Select(ar => ar.Role.Code)
             .ToList();
 
-        var response = await BuildAuthResponseAsync(
-            account, activeRoles, storedToken.DeviceInfo, ct);
+        var (accessToken, expiresAt) = _jwtService.GenerateAccessToken(account, activeRoles);
+        var (rawRefresh, refreshHash) = _jwtService.GenerateRefreshToken();
 
-        await _refreshTokenRepo.SaveChangesAsync(ct);
+        var refreshTokenDays = int.Parse(_config["Jwt:RefreshTokenDays"] ?? "30");
+        var newTokenExpiresAt = DateTimeOffset.UtcNow.AddDays(refreshTokenDays);
 
-        return ServiceResult<AuthResponse>.Success(response);
+        // Rotate nguyên tử: revoke token cũ + cấp token mới trong cùng transaction.
+        // Hai request refresh đồng thời chỉ một request thắng; request thua trả
+        // lỗi có kiểm soát thay vì cấp hai phiên mới.
+        var rotated = await _refreshTokenRepo.RotateAsync(
+            tokenHash,
+            account.AccountId,
+            storedToken.DeviceInfo,
+            refreshHash,
+            newTokenExpiresAt,
+            ct);
+
+        if (!rotated)
+            return ServiceResult<AuthResponse>.Failure(
+                "INVALID_REFRESH_TOKEN",
+                "Refresh token đã được sử dụng. Vui lòng đăng nhập lại.");
+
+        return ServiceResult<AuthResponse>.Success(new AuthResponse
+        {
+            AccessToken          = accessToken,
+            RefreshToken         = rawRefresh,
+            AccessTokenExpiresAt = expiresAt,
+            Account = new AccountInfo
+            {
+                AccountId   = account.AccountId,
+                Email       = account.Email,
+                FullName    = account.FullName,
+                DisplayName = account.DisplayName,
+                Roles       = activeRoles.AsReadOnly(),
+            },
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -225,20 +254,84 @@ public class AuthService(
         var account = await _accountRepo.GetByIdWithRolesAsync(accountId, ct);
         if (account is null)
             return ServiceResult.Failure("ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản.");
-        if (string.IsNullOrWhiteSpace(account.PasswordHash) ||
-            !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, account.PasswordHash))
+
+        // Tài khoản chỉ đăng nhập bằng Google chưa có mật khẩu local.
+        if (string.IsNullOrWhiteSpace(account.PasswordHash))
+            return ServiceResult.Failure(
+                "PASSWORD_NOT_SET",
+                "Tài khoản này đăng nhập bằng Google nên chưa có mật khẩu. "
+                + "Vui lòng đăng nhập bằng Google để tiếp tục.");
+
+        if (!VerifyPassword(request.CurrentPassword, account.PasswordHash))
             return ServiceResult.Failure("INVALID_CURRENT_PASSWORD", "Mật khẩu hiện tại không đúng.");
         if (request.CurrentPassword == request.NewPassword)
             return ServiceResult.Failure("PASSWORD_UNCHANGED", "Mật khẩu mới phải khác mật khẩu hiện tại.");
 
         account.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         await _accountRepo.SaveChangesAsync(ct);
+
+        // Đổi mật khẩu = đánh dấu mọi phiên khác không còn đáng tin.
+        // Access token đã phát vẫn sống tới hết hạn (xem chính sách trong README).
+        await _refreshTokenRepo.RevokeAllByAccountIdAsync(accountId, ct);
+        await _refreshTokenRepo.SaveChangesAsync(ct);
+
         return ServiceResult.Success();
+    }
+
+    // -------------------------------------------------------------------------
+    // Profile
+    // -------------------------------------------------------------------------
+    public async Task<ServiceResult<AccountProfileResponse>> GetProfileAsync(
+        Guid accountId, CancellationToken ct = default)
+    {
+        var account = await _accountRepo.GetByIdWithRolesAsync(accountId, ct);
+        if (account is null)
+            return ServiceResult<AccountProfileResponse>.Failure(
+                "ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản.");
+
+        return ServiceResult<AccountProfileResponse>.Success(BuildProfile(account));
+    }
+
+    public async Task<ServiceResult<AccountProfileResponse>> UpdateProfileAsync(
+        Guid accountId,
+        UpdateProfileRequest request,
+        CancellationToken ct = default)
+    {
+        var account = await _accountRepo.GetByIdWithRolesAsync(accountId, ct);
+        if (account is null)
+            return ServiceResult<AccountProfileResponse>.Failure(
+                "ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản.");
+
+        if (account.Status != "Active")
+            return ServiceResult<AccountProfileResponse>.Failure(
+                "ACCOUNT_INACTIVE", "Tài khoản đã bị khoá hoặc vô hiệu hoá.");
+
+        // Chỉ cập nhật field được gửi lên. null = giữ nguyên giá trị cũ.
+        if (request.DisplayName is not null)
+            account.DisplayName = request.DisplayName.Trim();
+        if (request.Phone is not null)
+            account.Phone = request.Phone.Trim();
+
+        await _accountRepo.SaveChangesAsync(ct);
+        return ServiceResult<AccountProfileResponse>.Success(BuildProfile(account));
     }
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    private static AccountProfileResponse BuildProfile(Account account) => new()
+    {
+        AccountId   = account.AccountId,
+        Email       = account.Email,
+        FullName    = account.FullName,
+        DisplayName = account.DisplayName,
+        Phone       = account.Phone,
+        Status      = account.Status,
+        CreatedAt   = account.CreatedAt,
+        Roles       = account.AccountRoles.Select(ar => ar.Role.Code).ToList().AsReadOnly(),
+        HasPassword = !string.IsNullOrWhiteSpace(account.PasswordHash),
+    };
 
     private async Task<AuthResponse> BuildAuthResponseAsync(
         Account        account,
@@ -285,5 +378,26 @@ public class AuthService(
         var bytes = System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(rawToken));
         return Convert.ToBase64String(bytes);
+    }
+
+    /// <summary>
+    /// Xác minh mật khẩu mà không để lỗi BCrypt (ví dụ salt/format không hợp lệ
+    /// do dữ liệu cũ hoặc tài khoản Google) nổi lên thành HTTP 500.
+    /// </summary>
+    private static bool VerifyPassword(string password, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(passwordHash)) return false;
+        try
+        {
+            return BCrypt.Net.BCrypt.Verify(password, passwordHash);
+        }
+        catch (BCrypt.Net.SaltParseException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 }

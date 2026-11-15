@@ -16,6 +16,20 @@ public interface IRefreshTokenRepository
     /// <summary>Revoke một token cụ thể (logout đơn). Chưa SaveChanges.</summary>
     Task RevokeAsync(RefreshToken token, CancellationToken ct = default);
 
+    /// <summary>
+    /// Rotate refresh token trong một transaction duy nhất: revoke token cũ
+    /// (compare-and-swap) và thêm token mới.
+    /// Trả false nếu token cũ không còn active — tức là request này thua trong
+    /// race với một request refresh khác. Khi đó token mới KHÔNG được tạo.
+    /// </summary>
+    Task<bool> RotateAsync(
+        string currentTokenHash,
+        Guid accountId,
+        string? deviceInfo,
+        string newTokenHash,
+        DateTimeOffset expiresAt,
+        CancellationToken ct = default);
+
     /// <summary>Revoke tất cả token của account (logout all devices). Chưa SaveChanges.</summary>
     Task RevokeAllByAccountIdAsync(Guid accountId, CancellationToken ct = default);
 

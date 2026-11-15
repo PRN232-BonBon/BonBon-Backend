@@ -24,4 +24,11 @@ public interface IAuthService
     Task<ServiceResult> LogoutAllDevicesAsync(Guid accountId, CancellationToken ct = default);
 
     Task<ServiceResult> ChangePasswordAsync(Guid accountId, ChangePasswordRequest request, CancellationToken ct = default);
+
+    /// <summary>Lấy hồ sơ tài khoản đầy đủ để hiển thị và chỉnh sửa.</summary>
+    Task<ServiceResult<AccountProfileResponse>> GetProfileAsync(Guid accountId, CancellationToken ct = default);
+
+    /// <summary>Cập nhật hồ sơ tài khoản (tên hiển thị, số điện thoại).</summary>
+    Task<ServiceResult<AccountProfileResponse>> UpdateProfileAsync(
+        Guid accountId, UpdateProfileRequest request, CancellationToken ct = default);
 }

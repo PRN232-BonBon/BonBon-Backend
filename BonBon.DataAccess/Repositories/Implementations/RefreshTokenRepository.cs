@@ -31,6 +31,53 @@ public class RefreshTokenRepository(BonBonDbContext db) : IRefreshTokenRepositor
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Rotate refresh token trong một transaction duy nhất: revoke token cũ
+    /// (compare-and-swap) và thêm token mới.
+    /// Trả false nếu token cũ không còn active — tức là request này thua trong
+    /// race với một request refresh khác. Khi đó token mới KHÔNG được tạo.
+    /// </summary>
+    public async Task<bool> RotateAsync(
+        string currentTokenHash,
+        Guid accountId,
+        string? deviceInfo,
+        string newTokenHash,
+        DateTimeOffset expiresAt,
+        CancellationToken ct = default)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+
+        // Compare-and-swap: điều kiện nằm trong chính câu UPDATE nên chỉ một
+        // request đồng thời nhận được affected = 1. Request còn lại nhận 0 và
+        // phải từ chối token đã bị tiêu thụ.
+        var affected = await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+             UPDATE bonbon.refresh_token
+             SET revoked_at = {DateTimeOffset.UtcNow}
+             WHERE token_hash = {currentTokenHash} AND revoked_at IS NULL
+             """, ct);
+
+        if (affected == 0)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
+
+        await _db.RefreshTokens.AddAsync(new RefreshToken
+        {
+            RefreshTokenId = Guid.NewGuid(),
+            AccountId      = accountId,
+            TokenHash      = newTokenHash,
+            ExpiresAt      = expiresAt,
+            CreatedAt      = DateTimeOffset.UtcNow,
+            DeviceInfo     = deviceInfo,
+        }, ct);
+
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
     public async Task RevokeAllByAccountIdAsync(Guid accountId, CancellationToken ct = default)
     {
         var activeTokens = await _db.RefreshTokens

@@ -188,6 +188,7 @@ public class AuthController(IAuthService authService) : ControllerBase
     [HttpPost("change-password")]
     [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ChangePassword(
         [FromBody] ChangePasswordRequest request,
         CancellationToken ct)
@@ -205,5 +206,57 @@ public class AuthController(IAuthService authService) : ControllerBase
             });
 
         return NoContent();
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/auth/profile
+    // -------------------------------------------------------------------------
+    /// <summary>Lấy hồ sơ tài khoản (tên, email, số điện thoại, ngày tham gia).</summary>
+    [HttpGet("profile")]
+    [Authorize]
+    [ProducesResponseType(typeof(AccountProfileResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetProfile(CancellationToken ct)
+    {
+        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
+
+        var result = await _authService.GetProfileAsync(accountId, ct);
+        if (!result.IsSuccess)
+            return NotFound(new ProblemDetails
+            {
+                Title = result.ErrorCode,
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status404NotFound,
+            });
+
+        return Ok(result.Data);
+    }
+
+    // -------------------------------------------------------------------------
+    // PUT /api/auth/profile
+    // -------------------------------------------------------------------------
+    /// <summary>Cập nhật hồ sơ tài khoản (tên hiển thị, số điện thoại).</summary>
+    [HttpPut("profile")]
+    [Authorize]
+    [ProducesResponseType(typeof(AccountProfileResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateProfile(
+        [FromBody] UpdateProfileRequest request,
+        CancellationToken ct)
+    {
+        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
+
+        var result = await _authService.UpdateProfileAsync(accountId, request, ct);
+        if (!result.IsSuccess)
+            return BadRequest(new ProblemDetails
+            {
+                Title = result.ErrorCode,
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status400BadRequest,
+            });
+
+        return Ok(result.Data);
     }
 }

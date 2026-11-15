@@ -81,7 +81,8 @@ public sealed class DisposablePostgresDatabase : IAsyncDisposable
             // 001 already contains the flexible-duration schema; historical 002 expects the old quantity column.
             foreach (var migration in new[] { "003_max_daily_rental.sql",
                 "004_minimal_vehicle_details.sql", "006_owner_vehicle_registration.sql",
-                "007_remove_vehicle_registration_document.sql", "008_admin_vehicle_review.sql" })
+                "007_remove_vehicle_registration_document.sql", "008_admin_vehicle_review.sql",
+                "010_optional_password_hash.sql" })
                 await database.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", migration)));
             return database;
         }
