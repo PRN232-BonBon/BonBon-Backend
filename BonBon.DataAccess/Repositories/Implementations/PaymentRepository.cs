@@ -5,9 +5,9 @@ using Npgsql;
 
 namespace BonBon.DataAccess.Repositories.Implementations;
 
-public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
+public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNPAY_SANDBOX") : IPaymentRepository
 {
-    private const string Provider = "VNPAY_SANDBOX";
+    private readonly string Provider = provider is "VNPAY_SANDBOX" or "SEPAY_SANDBOX" ? provider : throw new ArgumentException("Unsupported payment provider.");
     private const string PaymentColumns = """
         p.payment_id, p.booking_id, p.provider_reference, p.amount, p.currency, p.status,
         p.created_at, p.expires_at, p.checkout_url, p.needs_reconciliation, p.provider_transaction_no, p.paid_at
@@ -68,7 +68,7 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
                 return new(PaymentCreateOutcome.InProgress);
             }
             // Do not replace attempts owned by a different provider or legacy integration.
-            await using (var other = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND provider <> @provider AND status IN ('Pending','Processing'))",
+            await using (var other = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND provider <> @provider AND (status IN ('Pending','Processing') OR needs_reconciliation))",
                 connection, transaction, ("booking", bookingId), ("provider", Provider)))
                 if ((bool)(await other.ExecuteScalarAsync(ct))!) return new(PaymentCreateOutcome.ReconciliationRequired);
 
@@ -152,14 +152,20 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
             if (decision.Action == PaymentNotificationAction.InvalidAmount) return PaymentNotificationOutcome.InvalidAmount;
 
             // Audit every distinct valid notification, including failures/out-of-order duplicates.
-            await using (var audit = Command("""
+            var providerAuditColumns=Provider=="SEPAY_SANDBOX" ? ",gateway_provider" : "";
+            var providerAuditValues=Provider=="SEPAY_SANDBOX" ? ",@provider" : "";
+            await using (var audit = Command($"""
                 INSERT INTO bonbon.payment_notification (payment_id, fingerprint, provider_transaction_no, amount_minor,
-                    response_code, transaction_status, gateway_paid_at, received_at, disposition, reconciliation_reason)
-                VALUES (@id, @hash, @txn, @amount, @code, @status, @paid, @now, @action, @reason)
+                    response_code, transaction_status, gateway_paid_at, received_at, disposition, reconciliation_reason{providerAuditColumns})
+                VALUES (@id, @hash, @txn, @amount, @code, @status, @paid, @now, @action, @reason{providerAuditValues})
                 """, connection, transaction, ("id", payment.PaymentId), ("hash", notification.Fingerprint), ("txn", notification.TransactionNo),
                 ("amount", notification.AmountMinor), ("code", notification.ResponseCode), ("status", notification.TransactionStatus),
                 ("paid", notification.PaidAt), ("now", receivedAt), ("action", decision.Action.ToString()), ("reason", decision.Reason)))
+            {
+                if(Provider=="SEPAY_SANDBOX") audit.Parameters.AddWithValue("provider",Provider);
+
                 await audit.ExecuteNonQueryAsync(ct);
+            }
 
             if (decision.Action != PaymentNotificationAction.Duplicate)
             {
@@ -184,6 +190,13 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
                         connection, transaction, ("id", bookingId));
                     if (await confirm.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Locked booking changed during payment confirmation.");
                 }
+            }
+
+            if (Provider=="SEPAY_SANDBOX") {
+                await using var evidence=Command("INSERT INTO bonbon.sepay_payment_evidence(payment_id,fingerprint,evidence) VALUES(@id,@hash,@evidence)",
+                    connection,transaction,("id",payment.PaymentId),("hash",notification.Fingerprint),
+                    ("evidence",notification.SePayEvidence ?? throw new ArgumentException("Missing merchant-scoped SePay evidence.")));
+                await evidence.ExecuteNonQueryAsync(ct);
             }
             await transaction.CommitAsync(ct);
             return decision.Action == PaymentNotificationAction.Duplicate ? PaymentNotificationOutcome.Duplicate : PaymentNotificationOutcome.Applied;
@@ -296,6 +309,13 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
                 if (!(bool)(await guard.ExecuteScalarAsync(ct))!) throw new PaymentSchemaUnavailableException();
             await using (var version = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment_gateway_schema WHERE version = 1)", connection, null))
                 if (!(bool)(await version.ExecuteScalarAsync(ct))!) throw new PaymentSchemaUnavailableException();
+
+            if(Provider=="SEPAY_SANDBOX") {
+                await using var guard=Command("SELECT to_regclass('bonbon.sepay_gateway_schema') IS NOT NULL AND to_regclass('bonbon.sepay_payment_evidence') IS NOT NULL AND to_regclass('bonbon.sepay_rejected_notification') IS NOT NULL",connection,null);
+                if(await guard.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
+                await using var marker=Command("SELECT EXISTS(SELECT 1 FROM bonbon.sepay_gateway_schema WHERE version=1) AND (SELECT count(*)=4 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='bonbon' AND i.indisunique AND i.indisvalid AND i.indisready AND c.relname IN ('uq_sepay_sandbox_idempotency','uq_sepay_sandbox_active','uq_sepay_sandbox_accepted_success','uq_sepay_sandbox_transaction'))",connection,null);
+                if(await marker.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
+            }
             return await action(connection);
         }
         finally { if (close) await connection.CloseAsync(); }

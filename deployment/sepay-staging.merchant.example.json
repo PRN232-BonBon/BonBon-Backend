@@ -1,0 +1,13 @@
+{
+  "SePay": {
+    "Enabled": false,
+    "MerchantId": "",
+    "MerchantSecretKey": "",
+    "IpnSecretKey": "",
+    "SandboxCheckoutUrl": "https://pay-sandbox.sepay.vn/v1/checkout/init",
+    "SandboxApiBaseUrl": "https://pgapi-sandbox.sepay.vn",
+    "PublicOrigin": "",
+    "ReturnUrl": "",
+    "FrontendResultUrl": ""
+  }
+}

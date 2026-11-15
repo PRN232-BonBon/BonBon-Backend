@@ -12,7 +12,7 @@ namespace BonBon.API.Controllers;
 [Route("api/payments")]
 [Produces("application/json")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class PaymentController(IPaymentService payments, IOptions<PaymentReturnOptions> returnOptions) : ControllerBase
+public sealed class PaymentController(IPaymentService payments, IOptions<PaymentReturnOptions> returnOptions, ISePayCheckoutService? sepay = null) : ControllerBase
 {
     [HttpPost]
     [Authorize(Roles = "Customer")]
@@ -24,6 +24,11 @@ public sealed class PaymentController(IPaymentService payments, IOptions<Payment
         if (Request.Headers["Idempotency-Key"].Count != 1) return PaymentProblem("PAYMENT_REQUEST_INVALID", "Cần đúng một Idempotency-Key.");
         var ip = HttpContext.Connection.RemoteIpAddress;
         if (ip?.IsIPv4MappedToIPv6 == true) ip = ip.MapToIPv4();
+        if (request.Provider == "SEPAY_SANDBOX" && sepay is not null) {
+            var checkout = await sepay.CreateAsync(customer, request, idempotencyKey ?? "", ip?.ToString() ?? "", ct);
+            return checkout.IsSuccess ? Ok(checkout.Data) : PaymentProblem(checkout.ErrorCode!, checkout.ErrorMessage!);
+        }
+        if (request.Provider != "VNPAY_SANDBOX") return PaymentProblem("PAYMENT_REQUEST_INVALID", "Provider không được hỗ trợ.");
         var result = await payments.CreateAsync(customer, request, idempotencyKey ?? "", ip?.ToString() ?? "", ct);
         return result.IsSuccess ? Ok(result.Data) : PaymentProblem(result.ErrorCode!, result.ErrorMessage!);
     }
@@ -31,9 +36,14 @@ public sealed class PaymentController(IPaymentService payments, IOptions<Payment
     [HttpGet("{paymentId:guid}")]
     [Authorize(Roles = "Customer")]
     [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Get(Guid paymentId, CancellationToken ct)
+    public async Task<IActionResult> Get(Guid paymentId, CancellationToken ct, [FromQuery] string provider = "VNPAY_SANDBOX")
     {
         if (!TryAccount(out var customer)) return Unauthorized();
+        if (provider == "SEPAY_SANDBOX" && sepay is not null) {
+            var payment = await sepay.GetAsync(customer, paymentId, ct);
+            return payment.IsSuccess ? Ok(payment.Data) : PaymentProblem(payment.ErrorCode!, payment.ErrorMessage!);
+        }
+        if (provider != "VNPAY_SANDBOX") return PaymentProblem("PAYMENT_REQUEST_INVALID", "Provider không được hỗ trợ.");
         var result = await payments.GetAsync(customer, paymentId, ct);
         return result.IsSuccess ? Ok(result.Data) : PaymentProblem(result.ErrorCode!, result.ErrorMessage!);
     }

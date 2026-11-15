@@ -16,7 +16,7 @@ public sealed record PaymentCreateResult(PaymentCreateOutcome Outcome, PaymentAt
 // These fields have already passed gateway signature and syntax verification.
 public sealed record VerifiedPaymentNotification(
     string Reference, long AmountMinor, string ResponseCode, string TransactionStatus,
-    string? TransactionNo, DateTimeOffset? PaidAt, string Fingerprint)
+    string? TransactionNo, DateTimeOffset? PaidAt, string Fingerprint, int? GatewayResultCode = null, string? SePayEvidence = null)
 {
     public bool IsSuccess => ResponseCode == "00" && TransactionStatus == "00";
     // 07 may mean debited but suspected fraud; unknown/reversal/processing results
@@ -29,7 +29,7 @@ public sealed record PaymentNotificationContext(
     PaymentAttempt Payment, string BookingStatus, decimal BookingAmount, DateTimeOffset BookingStartAt,
     bool ParticipantsActive, bool OtherSucceeded, bool TransactionUsedElsewhere, DateTimeOffset ReceivedAt);
 
-public enum PaymentNotificationAction { Success, Failure, ReconcileSuccess, ReconcilePending, Duplicate, InvalidAmount, InvalidReference }
+public enum PaymentNotificationAction { Success, Failure, ReconcileSuccess, ReconcilePending, Duplicate, InvalidAmount, InvalidReference, Processing }
 public sealed record PaymentNotificationDecision(PaymentNotificationAction Action, string? Reason = null);
 public enum PaymentNotificationOutcome { Applied, Duplicate, NotFound, InvalidAmount }
 

@@ -1,0 +1,20 @@
+{
+  "ConnectionStrings": { "DefaultConnection": "" },
+  "Jwt": { "Key": "", "Issuer": "BonBon.SePayStaging", "Audience": "BonBon.SePayStaging.Web", "ExpiryMinutes": 30, "RefreshTokenDays": 1 },
+  "Payment": { "Enabled": false, "CheckoutMinutes": 15 },
+  "PaymentLocal": { "IpnSimulationEnabled": false },
+  "PaymentStaging": {
+    "DatabaseProfile": "SePayDedicated",
+    "ExpectedDatabaseHost": "sepay-postgres",
+    "ExpectedDatabaseAddress": "172.30.92.2",
+    "DatabaseMarker": "",
+    "TrustedProxyAddresses": ["172.30.91.2"],
+    "PublicOrigin": "",
+    "FrontendOrigin": "",
+    "SePayMerchantVerified": false,
+    "SePayCallbacksVerified": false,
+    "SePayReconciliationPlanVerified": false
+  },
+  "AllowedHosts": "",
+  "Logging": { "LogLevel": { "Default": "Warning", "Microsoft.AspNetCore": "Warning", "Microsoft.EntityFrameworkCore.Database.Command": "Warning" } }
+}

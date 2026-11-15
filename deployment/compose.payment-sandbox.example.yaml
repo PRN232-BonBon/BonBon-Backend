@@ -1,0 +1,30 @@
+# Standalone project: never combine with compose.yaml/compose.production.yaml.
+# No database service, no init scripts, no migration, no production volume/network.
+name: bonbon-payment-sandbox
+services:
+  api:
+    image: ${PAYMENT_SANDBOX_API_IMAGE:?Select an immutable reviewed sandbox image}
+    restart: "no"
+    environment:
+      ASPNETCORE_ENVIRONMENT: PaymentStaging
+      DOTNET_ENVIRONMENT: PaymentStaging
+      ASPNETCORE_URLS: http://+:8080
+      BONBON_PAYMENT_STAGING_CONFIG: /run/payment-staging.json
+    volumes:
+      - type: bind
+        source: ${PAYMENT_SANDBOX_CONFIG_FILE:?Set an absolute private JSON path outside Git}
+        target: /run/payment-staging.json
+        read_only: true
+    ports:
+      - "127.0.0.1:5288:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --output /dev/null http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

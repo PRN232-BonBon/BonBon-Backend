@@ -1,0 +1,21 @@
+# Keep JWT and secrets in a private HTTP client environment; never paste them into this file.
+@api = http://127.0.0.1:5288
+
+### Read-only health
+GET {{api}}/health
+
+### Execute only when you explicitly want to reserve a new synthetic checkout.
+POST {{api}}/api/payments
+Authorization: Bearer {{customerToken}}
+Idempotency-Key: {{stableIdempotencyKey}}
+Content-Type: application/json
+
+{"bookingId":"{{syntheticBookingId}}","provider":"SEPAY_SANDBOX"}
+
+### Customer status, not provider redirect query state
+GET {{api}}/api/payments/{{paymentId}}?provider=SEPAY_SANDBOX
+Authorization: Bearer {{customerToken}}
+
+### Admin-only merchant-scoped REST reconciliation
+POST {{api}}/api/payments/sepay/{{paymentId}}/reconcile
+Authorization: Bearer {{adminToken}}

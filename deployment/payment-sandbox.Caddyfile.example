@@ -1,0 +1,66 @@
+# REVIEW ONLY. Administrator imports this separate hostname into the existing edge.
+# Never start a competing Caddy instance on production ports or reuse production DNS.
+# Direct edge only; not a tunnel/CDN template. Exact tester /32 and /128 CIDRs required.
+{$PAYMENT_SANDBOX_HOST} {
+    header {
+        Referrer-Policy "no-referrer"
+        Cache-Control "no-store"
+        X-Content-Type-Options "nosniff"
+    }
+    log {
+        output discard
+    }
+    @callback {
+        method GET
+        path /api/payments/vnpay/ipn /api/payments/vnpay/return/redirect
+    }
+    @testerGet {
+        remote_ip {$PAYMENT_SANDBOX_TESTER_CIDRS}
+        method GET
+        path /api/vehicles /api/vehicles/images/* /api/vehicles/owner-blocks /api/vehicles/mine /api/bookings/mine /api/bookings/owner
+    }
+    @testerDetail {
+        remote_ip {$PAYMENT_SANDBOX_TESTER_CIDRS}
+        method GET
+        path_regexp detail ^/api/(bookings|payments)/[0-9a-fA-F-]{36}$
+    }
+    @testerPost {
+        remote_ip {$PAYMENT_SANDBOX_TESTER_CIDRS}
+        method POST
+        path /api/auth/login /api/auth/refresh /api/auth/logout /api/bookings/quote /api/bookings/validate-window /api/bookings /api/payments
+    }
+    @testerDecision {
+        remote_ip {$PAYMENT_SANDBOX_TESTER_CIDRS}
+        method POST
+        path_regexp decision ^/api/bookings/[0-9a-fA-F-]{36}/(approve|reject)$
+    }
+    @testerSpa {
+        remote_ip {$PAYMENT_SANDBOX_TESTER_CIDRS}
+        method GET HEAD
+        path / /cars /my-trips /owner/bookings /payment/result /assets/* /app-icon.webp /not-found.webp /favicon.svg /vite.svg
+    }
+    route {
+        handle @callback {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerGet {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerDetail {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerPost {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerDecision {
+            reverse_proxy 127.0.0.1:5288
+        }
+        handle @testerSpa {
+            root * {$PAYMENT_SANDBOX_FRONTEND_ROOT}
+            try_files {path} /index.html
+            file_server
+        }
+        # Blocks admin, tracking, registration, debug, health and all other paths.
+        respond 404
+    }
+}

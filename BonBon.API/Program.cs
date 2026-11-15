@@ -22,18 +22,33 @@ if(builder.Environment.IsDevelopment())
     builder.Configuration.AddJsonFile("appsettings.Local.json",optional:true,reloadOnChange:false)
         .AddEnvironmentVariables().AddCommandLine(args);
 var paymentStaging=builder.Environment.IsEnvironment(PaymentStaging.EnvironmentName);
-if(paymentStaging)
+var paymentLocal=builder.Environment.IsEnvironment(PaymentLocal.EnvironmentName);
+var paymentIsolated=paymentStaging || paymentLocal;
+if(paymentIsolated)
 {
-    var secretPath=Environment.GetEnvironmentVariable("BONBON_PAYMENT_STAGING_CONFIG");
+    var secretPath=Environment.GetEnvironmentVariable(paymentLocal ? "BONBON_PAYMENT_LOCAL_CONFIG" : "BONBON_PAYMENT_STAGING_CONFIG");
     if(string.IsNullOrWhiteSpace(secretPath) || !Path.IsPathFullyQualified(secretPath))
         throw new InvalidOperationException("PaymentStaging requires an explicit absolute secret config path.");
     PaymentStaging.AddLocalConfiguration(builder.Configuration,secretPath).AddEnvironmentVariables();
+    var sepayPath=Environment.GetEnvironmentVariable("BONBON_SEPAY_CONFIG");
+    if(!string.IsNullOrWhiteSpace(sepayPath)) {
+        if(!Path.IsPathFullyQualified(sepayPath)) throw new InvalidOperationException("Absolute SePay secret file required.");
+        using var document=System.Text.Json.JsonDocument.Parse(File.ReadAllText(sepayPath));
+        if(document.RootElement.EnumerateObject().Any(x=>x.Name!="SePay")) throw new InvalidOperationException("Dedicated SePay file may only contain SePay settings.");
+        PaymentStaging.AddLocalConfiguration(builder.Configuration,sepayPath).AddEnvironmentVariables();
+    }
+}
+if(builder.Configuration.GetValue<bool>("SePay:Enabled")) {
+    if(!paymentIsolated || !(builder.Configuration.GetSection("SePay").Get<SePayOptions>()??new()).IsValid())
+        throw new InvalidOperationException("SePay sandbox requires an isolated verified Payment environment and complete configuration.");
+    builder.Configuration["PaymentLocal:IpnSimulationEnabled"]="false";
 }
 
 // ─── Database ────────────────────────────────────────────────────────────────
-if(paymentStaging)
+if(paymentLocal) builder.WebHost.UseUrls("http://127.0.0.1:5288", "https://127.0.0.1:5287");
+if(paymentIsolated)
 {
-    var source=PaymentStaging.CreateDataSource(builder.Configuration);
+    var source=paymentLocal ? PaymentLocal.CreateDataSource(builder.Configuration) : PaymentStaging.CreateDataSource(builder.Configuration);
     builder.Services.AddSingleton(source);
     builder.Services.AddDbContext<BonBonDbContext>(options=>options.UseNpgsql(source));
 }
@@ -65,6 +80,16 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IPaymentGateway, VnPayGateway>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.Configure<SePayOptions>(builder.Configuration.GetSection("SePay"));
+builder.Services.AddSingleton<ISePaySignatureService,SePaySignatureService>();
+builder.Services.AddScoped<ISePayPaymentRepository,SePayPaymentRepository>();
+builder.Services.AddScoped<ISePayCheckoutService,SePayCheckoutService>();
+builder.Services.AddScoped<ISePayReconciliationService,SePayReconciliationService>();
+builder.Services.AddScoped<ISePayIpnHandler,SePayIpnHandler>();
+// Dedicated owned client: no auth/body logging, redirects, proxy or create-checkout retry.
+builder.Services.AddScoped<ISePayGateway>(provider => new SePayGateway(new HttpClient(new SocketsHttpHandler {
+    AllowAutoRedirect=false,UseProxy=false,ConnectTimeout=TimeSpan.FromSeconds(5) }) {Timeout=TimeSpan.FromSeconds(15)},
+    provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SePayOptions>>(),provider.GetRequiredService<ISePaySignatureService>()));
 
 // ─── JWT Authentication ──────────────────────────────────────────────────────
 var jwtKey = builder.Configuration["Jwt:Key"];
@@ -115,7 +140,8 @@ var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
     .Get<string[]>() ?? [];
 // Configuration arrays merge by index; do not inherit extra production origins.
-if(paymentStaging) allowedOrigins=[string.IsNullOrWhiteSpace(builder.Configuration["PaymentStaging:PublicOrigin"])
+if(paymentStaging && SePayStaging.IsSelected(builder.Configuration)) allowedOrigins=SePayStaging.FrontendOrigins(builder.Configuration);
+else if(paymentIsolated) allowedOrigins=[string.IsNullOrWhiteSpace(builder.Configuration["PaymentStaging:PublicOrigin"])
     ? "http://127.0.0.1:5289" : builder.Configuration["PaymentStaging:PublicOrigin"]!.TrimEnd('/')];
 
 builder.Services.AddCors(options =>
@@ -132,10 +158,12 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
-    if(paymentStaging)
+    if(paymentIsolated)
     {
         options.KnownProxies.Add(IPAddress.Loopback);
         options.KnownProxies.Add(IPAddress.IPv6Loopback);
+        foreach(var proxy in paymentLocal ? Array.Empty<IPAddress>() : PaymentStaging.TrustedProxyAddresses(builder.Configuration))
+            options.KnownProxies.Add(proxy);
         options.ForwardLimit=1;
         options.RequireHeaderSymmetry=true;
     }
@@ -185,8 +213,15 @@ builder.Services.AddSwaggerGen(c =>
 
 // ─── Build ───────────────────────────────────────────────────────────────────
 var app = builder.Build();
-if(paymentStaging)
-    await PaymentStaging.VerifySchemaAsync(app.Services.GetRequiredService<Npgsql.NpgsqlDataSource>());
+if(paymentLocal)
+    await PaymentLocal.VerifySchemaAsync(app.Services.GetRequiredService<Npgsql.NpgsqlDataSource>());
+else if(paymentStaging)
+    await PaymentStaging.VerifyConfiguredSchemaAsync(app.Services.GetRequiredService<Npgsql.NpgsqlDataSource>(),app.Configuration);
+if(app.Configuration.GetValue<bool>("SePay:Enabled")) {
+    // Read-only readiness guard checks the provider marker/indexes using the restricted runtime role.
+    using var scope=app.Services.CreateScope();
+    await scope.ServiceProvider.GetRequiredService<ISePayPaymentRepository>().Payments.GetByReferenceAsync(Guid.Empty.ToString("N"));
+}
 
 app.UseForwardedHeaders();
 
@@ -225,13 +260,18 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
-if(paymentStaging) app.MapGet("/health", async (Npgsql.NpgsqlDataSource source,CancellationToken ct)=>
+if(paymentLocal) app.MapGet("/health", async (Npgsql.NpgsqlDataSource source,CancellationToken ct)=>
+{
+    try { await PaymentLocal.VerifySchemaAsync(source,ct); return Results.Ok(new { status="healthy", environment=PaymentLocal.EnvironmentName, database=PaymentLocal.Database, databaseVerified=true, paymentEnabled=app.Configuration.GetValue<bool>("Payment:Enabled"), publicIpnReady=false }); }
+    catch { return Results.Problem(statusCode:503,title:"Local readiness unavailable"); }
+});
+else if(paymentStaging) app.MapGet("/health", async (Npgsql.NpgsqlDataSource source,CancellationToken ct)=>
 {
     try
     {
-        await PaymentStaging.VerifySchemaAsync(source,ct);
+        await PaymentStaging.VerifyConfiguredSchemaAsync(source,app.Configuration,ct);
         return Results.Ok(new { status="healthy",service="BonBon.API",environment=PaymentStaging.EnvironmentName,
-            database=PaymentStaging.Database,databaseVerified=true,paymentEnabled=app.Configuration.GetValue<bool>("Payment:Enabled") });
+            database=PaymentStaging.ConfiguredDatabase(app.Configuration),databaseVerified=true,paymentEnabled=app.Configuration.GetValue<bool>("Payment:Enabled"),sepayEnabled=app.Configuration.GetValue<bool>("SePay:Enabled") });
     }
     catch { return Results.Problem(statusCode:503,title:"Staging readiness unavailable"); }
 });
@@ -243,6 +283,7 @@ else app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.MapControllers();
+app.MapLocalVnPayIpnSimulation();
 app.MapHub<TrackingHub>("/hubs/tracking");
 
 app.Run();
