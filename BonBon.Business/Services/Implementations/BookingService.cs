@@ -87,7 +87,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
 
         var normalized = window.Data!;
         var price = RentalPricing.Calculate(normalized.RentalType, normalized.BillableUnits,
-            vehicle.HourPrice, vehicle.DayPrice, vehicle.WeeklyDiscountEnabled, vehicle.WeeklyDiscountPercent);
+            vehicle.HourPrice, vehicle.DayPrice, vehicle.WeeklyDiscountEnabled, vehicle.WeeklyDiscountPercent,
+            normalized.EndAt - normalized.StartAt);
         var includedMileageKm = vehicle.MileageLimitEnabled
             ? vehicle.DailyMileageLimitKm * (normalized.RentalType == "Daily" ? normalized.BillableUnits : 1)
             : null;
@@ -173,6 +174,7 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
                 quote.Data.RentalType,
                 quote.Data.StartAt,
                 quote.Data.EndAt,
+                request.ExpectedQuote,
                 ct);
 
             return ServiceResult<BookingResponse>.Success(new BookingResponse(
@@ -192,6 +194,10 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
                 created.RentalTerms,
                 created.Currency,
                 created.Status));
+        }
+        catch (BookingQuoteChangedException)
+        {
+            return ServiceResult<BookingResponse>.Failure("QUOTE_CHANGED", "Giá hoặc điều kiện thuê đã thay đổi. Vui lòng xem báo giá mới trước khi đặt xe.");
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.ExclusionViolation)
         {

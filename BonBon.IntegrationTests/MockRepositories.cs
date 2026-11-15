@@ -86,12 +86,12 @@ public class MockBookingRepository : IBookingRepository
         return Task.FromResult(exists);
     }
 
-    public Task<CreatedBooking> CreateAsync(Guid customerAccountId, Guid vehicleId, string rentalType, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default)
+    public Task<CreatedBooking> CreateAsync(Guid customerAccountId, Guid vehicleId, string rentalType, DateTimeOffset startAt, DateTimeOffset endAt, ExpectedBookingQuote? expectedQuote, CancellationToken ct = default)
     {
         var bookingId = Guid.NewGuid();
         var record = new BookingDetailRecord(
             BookingId: bookingId,
-            Status: "PendingApproval",
+            Status: "AwaitingPayment",
             RentalType: rentalType,
             StartAt: startAt,
             EndAt: endAt,
@@ -140,7 +140,7 @@ public class MockBookingRepository : IBookingRepository
             OverageFeePerKm: 3000m,
             RentalTerms: "Không hút thuốc",
             Currency: "VND",
-            Status: "PendingApproval"
+            Status: "AwaitingPayment"
         ));
     }
 
@@ -244,6 +244,9 @@ public class MockVehicleRepository : IVehicleRepository
 
     public Task<IReadOnlyList<OwnerAvailabilityBlock>> GetOwnerBlocksAsync(Guid ownerAccountId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<OwnerAvailabilityBlock>>(Array.Empty<OwnerAvailabilityBlock>());
+
+    public Task<IReadOnlyList<OccupiedVehicleInterval>> GetOccupiedIntervalsAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OccupiedVehicleInterval>>(Array.Empty<OccupiedVehicleInterval>());
 
     public Task<(byte[] Data, string ContentType)?> GetImageAsync(Guid imageId, CancellationToken ct = default) =>
         throw new NotImplementedException();

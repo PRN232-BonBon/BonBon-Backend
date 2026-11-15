@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using BonBon.DataAccess.Repositories.Interfaces;
 
 namespace BonBon.Business.DTOs.Bookings;
 
@@ -10,6 +11,7 @@ public sealed class BookingQuoteRequest : RentalWindowRequestBase
 public sealed class CreateBookingRequest : RentalWindowRequestBase
 {
     public Guid VehicleId { get; init; }
+    public ExpectedBookingQuote? ExpectedQuote { get; init; }
 }
 
 public abstract class RentalWindowRequestBase

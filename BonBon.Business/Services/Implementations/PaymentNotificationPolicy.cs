@@ -25,7 +25,7 @@ public static class PaymentNotificationPolicy
                 : payment.Status is "Failed" or "Cancelled" ? "SUCCESS_AFTER_TERMINAL_RESULT"
                 : payment.NeedsReconciliation ? "PREVIOUS_RECONCILIATION_REQUIRED"
                 : notification.PaidAt is null || notification.PaidAt < payment.CreatedAt.AddSeconds(-1) || notification.PaidAt > context.ReceivedAt.AddMinutes(2) ? "INVALID_PAYMENT_TIME"
-                : context.ReceivedAt > payment.ExpiresAt || notification.PaidAt > payment.ExpiresAt ? "LATE_PAYMENT"
+                : context.ReceivedAt >= payment.ExpiresAt || notification.PaidAt >= payment.ExpiresAt ? "LATE_PAYMENT"
                 : context.BookingStatus != "AwaitingPayment" ? "BOOKING_NOT_PAYABLE"
                 : context.BookingAmount != payment.Amount ? "BOOKING_AMOUNT_CHANGED"
                 : context.BookingStartAt <= context.ReceivedAt ? "PICKUP_TIME_PASSED"

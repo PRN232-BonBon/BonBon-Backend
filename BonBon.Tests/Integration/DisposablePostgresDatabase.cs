@@ -82,7 +82,7 @@ public sealed class DisposablePostgresDatabase : IAsyncDisposable
             foreach (var migration in new[] { "003_max_daily_rental.sql",
                 "004_minimal_vehicle_details.sql", "006_owner_vehicle_registration.sql",
                 "007_remove_vehicle_registration_document.sql", "008_admin_vehicle_review.sql",
-                "010_optional_password_hash.sql" })
+                "010_optional_password_hash.sql", "011_pending_booking_holds.sql" })
                 await database.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", migration)));
             return database;
         }

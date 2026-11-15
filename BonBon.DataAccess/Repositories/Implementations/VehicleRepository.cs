@@ -292,6 +292,39 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
         finally { if (shouldClose) await connection.CloseAsync(); }
     }
 
+    public async Task<IReadOnlyList<OccupiedVehicleInterval>> GetOccupiedIntervalsAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = new NpgsqlCommand("""
+                SELECT b.start_at, b.end_at FROM bonbon.booking b
+                JOIN bonbon.vehicle v ON v.vehicle_id = b.vehicle_id
+                WHERE b.vehicle_id = @vehicle AND v.status = 'Available' AND bonbon.has_active_role(v.owner_account_id, 3::smallint)
+                    AND b.status IN ('AwaitingPayment', 'Confirmed',
+                    'ReadyForPickup', 'InProgress', 'Returned', 'AwaitingSettlement', 'Completed')
+                    AND b.start_at < @end AND b.end_at > @start
+                UNION ALL
+                SELECT ab.start_at, ab.end_at FROM bonbon.availability_block ab
+                JOIN bonbon.vehicle v ON v.vehicle_id = ab.vehicle_id
+                WHERE ab.vehicle_id = @vehicle AND v.status = 'Available' AND bonbon.has_active_role(v.owner_account_id, 3::smallint)
+                    AND ab.start_at < @end AND ab.end_at > @start
+                ORDER BY start_at
+                """, connection);
+            command.Parameters.AddWithValue("vehicle", vehicleId);
+            command.Parameters.AddWithValue("start", NpgsqlDbType.TimestampTz, startAt.ToUniversalTime());
+            command.Parameters.AddWithValue("end", NpgsqlDbType.TimestampTz, endAt.ToUniversalTime());
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var result = new List<OccupiedVehicleInterval>();
+            while (await reader.ReadAsync(ct))
+                result.Add(new(reader.GetFieldValue<DateTimeOffset>(0), reader.GetFieldValue<DateTimeOffset>(1)));
+            return result;
+        }
+        finally { if (shouldClose) await connection.CloseAsync(); }
+    }
+
     public async Task<IReadOnlyList<VehicleCatalogRecord>> SearchAsync(VehicleSearchFilter filter, CancellationToken ct = default)
     {
         var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
@@ -316,7 +349,11 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
             JOIN bonbon.account a ON a.account_id = v.owner_account_id
             WHERE v.status = 'Available'
               AND bonbon.has_active_role(v.owner_account_id, 3::smallint)
-              AND (@location IS NULL OR v.pickup_address ILIKE '%' || @location || '%')
+              AND (@location IS NULL OR v.pickup_address ILIKE '%' || @location || '%'
+                   OR (@location = 'TP. Hồ Chí Minh' AND (
+                       v.pickup_address ILIKE '%Hồ Chí Minh%'
+                       OR v.pickup_address ILIKE '%HCM%'
+                       OR v.pickup_address ILIKE '%Thủ Đức%')))
               AND (@seats IS NULL OR v.seats = @seats)
               AND (@transmission IS NULL OR v.transmission = @transmission)
               AND (@fuel_type IS NULL OR v.fuel_type = @fuel_type)

@@ -71,6 +71,7 @@ public class PaymentNotificationPolicyTests
 
     [Theory]
     [InlineData("late", "LATE_PAYMENT")]
+    [InlineData("at-expiry", "LATE_PAYMENT")]
     [InlineData("booking", "BOOKING_NOT_PAYABLE")]
     [InlineData("price", "BOOKING_AMOUNT_CHANGED")]
     [InlineData("inactive", "PARTICIPANTS_INACTIVE")]
@@ -88,6 +89,7 @@ public class PaymentNotificationPolicyTests
         context = scenario switch
         {
             "late" => context with { ReceivedAt = context.Payment.ExpiresAt.AddSeconds(1) },
+            "at-expiry" => context with { ReceivedAt = context.Payment.ExpiresAt },
             "booking" => context with { BookingStatus = "Cancelled" },
             "price" => context with { BookingAmount = 1500000m },
             "inactive" => context with { ParticipantsActive = false },

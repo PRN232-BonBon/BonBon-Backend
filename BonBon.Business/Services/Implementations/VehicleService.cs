@@ -168,7 +168,7 @@ public sealed class VehicleService(
             if (window is not null)
             {
                 quotedAmount = RentalPricing.Calculate(window.RentalType, window.BillableUnits,
-                    v.HourPrice, v.DayPrice, v.WeeklyDiscountEnabled, v.WeeklyDiscountPercent).TotalAmount;
+                    v.HourPrice, v.DayPrice, v.WeeklyDiscountEnabled, v.WeeklyDiscountPercent, window.EndAt - window.StartAt).TotalAmount;
             }
 
             return new VehicleCatalogItem(

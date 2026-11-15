@@ -15,14 +15,14 @@ public class BillingTests
     public void Discount_only_applies_to_daily_rentals_of_at_least_seven_days(
         string type, int units, bool enabled, decimal percent, decimal total)
     {
-        var result = RentalPricing.Calculate(type, units, 100000, 650000, enabled, percent);
+        var result = RentalPricing.Calculate(type, units, 100000, 650000, enabled, percent, TimeSpan.FromDays(units));
         Assert.Equal(total, result.TotalAmount);
     }
 
     [Fact]
     public void Vnd_discount_rounds_away_from_zero()
     {
-        Assert.Equal(1m, RentalPricing.Calculate("Daily", 7, 1, 1, true, 10).DiscountAmount);
+        Assert.Equal(1m, RentalPricing.Calculate("Daily", 7, 1, 1, true, 10, TimeSpan.FromDays(7)).DiscountAmount);
         Assert.Equal(2m, MileagePricing.Calculate(0, 2.0005m, 2, 3000).Fee);
     }
 

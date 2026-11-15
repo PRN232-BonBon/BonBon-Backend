@@ -28,6 +28,11 @@ public sealed record CreatedBooking(
     string Currency,
     string Status);
 
+public sealed record ExpectedBookingQuote(int BillableUnits, decimal UnitPrice, decimal WeeklyDiscountPercent,
+    decimal DiscountAmount, decimal QuotedRentalAmount, int? IncludedMileageKm, decimal? OverageFeePerKm, string? RentalTerms);
+
+public sealed class BookingQuoteChangedException : Exception;
+
 public sealed record CustomerBooking(
     Guid BookingId,
     string Brand,
@@ -131,6 +136,7 @@ public interface IBookingRepository
         string rentalType,
         DateTimeOffset startAt,
         DateTimeOffset endAt,
+        ExpectedBookingQuote? expectedQuote,
         CancellationToken ct = default);
     Task<IReadOnlyList<CustomerBooking>> GetByCustomerAsync(Guid customerAccountId, CancellationToken ct = default);
     Task<BookingDetailRecord?> GetByIdAsync(Guid bookingId, CancellationToken ct = default);

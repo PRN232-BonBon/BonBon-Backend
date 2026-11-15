@@ -23,7 +23,7 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
             if (booking.CustomerId != customerId) return new(PaymentCreateOutcome.Forbidden);
             var active = await LockParticipantsAsync(connection, transaction, booking, ct);
             if (!active) return new(PaymentCreateOutcome.Inactive);
-            if (booking.Status != "AwaitingPayment" || booking.StartAt <= now || booking.VehicleStatus != "Available")
+            if (booking.Status != "AwaitingPayment" || booking.StartAt <= now || booking.HoldExpiresAt <= now || booking.VehicleStatus != "Available")
                 return new(PaymentCreateOutcome.InvalidBooking);
             if (booking.Currency != "VND" || booking.Amount <= 0 || booking.Amount > 9999999999m || decimal.Truncate(booking.Amount) != booking.Amount)
                 return new(PaymentCreateOutcome.InvalidAmount);
@@ -74,6 +74,7 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
 
             var id = Guid.NewGuid();
             var expires = now.Add(lifetime) < booking.StartAt ? now.Add(lifetime) : booking.StartAt;
+            if (booking.HoldExpiresAt is { } holdExpiry && holdExpiry < expires) expires = holdExpiry;
             var attempt = new PaymentAttempt(id, bookingId, id.ToString("N"), booking.Amount, booking.Currency, "Pending", now, expires, null);
             var url = buildCheckoutUrl(attempt); // Pure local signing; no external network call under locks.
             await using var insert = Command("""
@@ -184,12 +185,18 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
                         connection, transaction, ("id", bookingId));
                     if (await confirm.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Locked booking changed during payment confirmation.");
                 }
+                else if (decision.Action == PaymentNotificationAction.Failure && booking.HoldExpiresAt is not null)
+                {
+                    await using var release = Command("UPDATE bonbon.booking SET status = 'Cancelled' WHERE booking_id = @id AND status = 'AwaitingPayment' AND hold_expires_at IS NOT NULL",
+                        connection, transaction, ("id", bookingId));
+                    await release.ExecuteNonQueryAsync(ct);
+                }
             }
             await transaction.CommitAsync(ct);
             return decision.Action == PaymentNotificationAction.Duplicate ? PaymentNotificationOutcome.Duplicate : PaymentNotificationOutcome.Applied;
         }, ct);
 
-    private sealed record LockedBooking(Guid BookingId, Guid CustomerId, Guid OwnerId, decimal Amount, string Currency, string Status, DateTimeOffset StartAt, string VehicleStatus);
+    private sealed record LockedBooking(Guid BookingId, Guid CustomerId, Guid OwnerId, decimal Amount, string Currency, string Status, DateTimeOffset StartAt, string VehicleStatus, DateTimeOffset? HoldExpiresAt);
 
     private static async Task<LockedBooking?> LockBookingAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, CancellationToken ct)
     {
@@ -208,12 +215,13 @@ public sealed class PaymentRepository(BonBonDbContext db) : IPaymentRepository
             owner = vehicleReader.GetGuid(0);
             vehicleStatus = vehicleReader.GetString(1);
         }
-        await using var booking = Command("SELECT vehicle_id, customer_account_id, quoted_rental_amount, currency, status, start_at FROM bonbon.booking WHERE booking_id = @id FOR UPDATE",
+        await using var booking = Command("SELECT vehicle_id, customer_account_id, quoted_rental_amount, currency, status, start_at, hold_expires_at FROM bonbon.booking WHERE booking_id = @id FOR UPDATE",
             connection, transaction, ("id", id));
         await using var reader = await booking.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
         if (reader.GetGuid(0) != vehicleId) throw new PostgresException("Retry changed booking", "ERROR", "ERROR", "40001");
-        return new(id, reader.GetGuid(1), owner, reader.GetDecimal(2), reader.GetString(3), reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5), vehicleStatus);
+        return new(id, reader.GetGuid(1), owner, reader.GetDecimal(2), reader.GetString(3), reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5), vehicleStatus,
+            reader.IsDBNull(6) ? null : reader.GetFieldValue<DateTimeOffset>(6));
     }
 
     private static async Task<bool> LockParticipantsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, LockedBooking booking, CancellationToken ct)

@@ -67,52 +67,35 @@ public class BookingDecisionApiTests
         service.VerifyNoOtherCalls();
     }
 
-    [Theory]
-    [InlineData("BOOKING_NOT_FOUND", 404)]
-    [InlineData("BOOKING_NOT_OWNER", 403)]
-    [InlineData("OWNER_INACTIVE", 403)]
-    [InlineData("BOOKING_ID_INVALID", 400)]
-    [InlineData("BOOKING_STATE_CONFLICT", 409)]
-    [InlineData("SCHEDULE_CONFLICT", 409)]
-    [InlineData("CUSTOMER_INACTIVE", 409)]
-    [InlineData("VEHICLE_UNAVAILABLE", 409)]
-    [InlineData("BOOKING_DECISION_RETRY", 409)]
-    public async Task Returns_problem_details(string code, int expected)
+    [Fact]
+    public async Task Creating_booking_without_displayed_quote_is_rejected()
     {
         var service = new Mock<IBookingService>(MockBehavior.Strict);
-        service.Setup(x => x.ApproveAsync(Owner, Booking, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ServiceResult<BookingDecisionResponse>.Failure(code, "Thông báo"));
         using var server = CreateServer(service.Object);
         using var client = server.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Test-Role", "VehicleOwner");
-        var response = await client.PostAsync($"/api/bookings/{Booking}/approve", null);
-        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+        client.DefaultRequestHeaders.Add("X-Test-Role", "Customer");
+        var response = await client.PostAsJsonAsync("/api/bookings", new { vehicleId = Guid.NewGuid(), rentalType = "Daily", startAt = DateTimeOffset.UtcNow.AddDays(1), endAt = DateTimeOffset.UtcNow.AddDays(2) });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
-        Assert.Equal(code, problem!.Title);
-        Assert.Equal(expected, problem.Status);
+        Assert.Equal("QUOTE_REQUIRED", problem!.Title);
+        service.VerifyNoOtherCalls();
     }
 
     [Theory]
-    [InlineData("approve", "AwaitingPayment")]
-    [InlineData("reject", "Rejected")]
-    public async Task Uses_jwt_identity_and_ignores_client_supplied_decision_fields(string action, string status)
+    [InlineData("approve")]
+    [InlineData("reject")]
+    public async Task Manual_decisions_are_retired_and_do_not_change_bookings(string action)
     {
         var service = new Mock<IBookingService>(MockBehavior.Strict);
-        var result = ServiceResult<BookingDecisionResponse>.Success(new(Booking, status, 500000m, 1000000m, "VND", false));
-        if (action == "approve")
-            service.Setup(x => x.ApproveAsync(Owner, Booking, It.IsAny<CancellationToken>())).ReturnsAsync(result);
-        else
-            service.Setup(x => x.RejectAsync(Owner, Booking, It.IsAny<CancellationToken>())).ReturnsAsync(result);
         using var server = CreateServer(service.Object);
         using var client = server.CreateClient();
         client.DefaultRequestHeaders.Add("X-Test-Role", "VehicleOwner");
         var response = await client.PostAsJsonAsync($"/api/bookings/{Booking}/{action}",
             new { ownerAccountId = Guid.NewGuid(), status = "Confirmed", unitPrice = 1 });
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<BookingDecisionResponse>();
-        Assert.Equal(status, body!.Status);
-        Assert.Equal(1000000m, body.QuotedRentalAmount);
-        service.VerifyAll();
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        Assert.Equal("MANUAL_APPROVAL_REMOVED", body!.Title);
+        service.VerifyNoOtherCalls();
     }
 
     private sealed class TestAuthentication(

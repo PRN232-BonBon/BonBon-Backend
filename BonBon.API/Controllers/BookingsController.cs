@@ -15,46 +15,22 @@ public sealed class BookingsController(IBookingService bookingService) : Control
 
     [HttpPost("{bookingId:guid}/approve")]
     [Authorize(Roles = "VehicleOwner")]
-    [ProducesResponseType(typeof(BookingDecisionResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status410Gone)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Approve(Guid bookingId, CancellationToken ct)
+    public IActionResult Approve(Guid bookingId)
     {
-        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var accountId) || accountId == Guid.Empty)
-            return Unauthorized();
-        var result = await _bookingService.ApproveAsync(accountId, bookingId, ct);
-        return result.IsSuccess ? Ok(result.Data) : DecisionProblem(result.ErrorCode!, result.ErrorMessage!);
+        return StatusCode(StatusCodes.Status410Gone, new ProblemDetails { Title = "MANUAL_APPROVAL_REMOVED", Detail = "Đơn thuê mới được chuyển thẳng sang thanh toán.", Status = StatusCodes.Status410Gone });
     }
 
     [HttpPost("{bookingId:guid}/reject")]
     [Authorize(Roles = "VehicleOwner")]
-    [ProducesResponseType(typeof(BookingDecisionResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status410Gone)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Reject(Guid bookingId, CancellationToken ct)
+    public IActionResult Reject(Guid bookingId)
     {
-        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var accountId) || accountId == Guid.Empty)
-            return Unauthorized();
-        var result = await _bookingService.RejectAsync(accountId, bookingId, ct);
-        return result.IsSuccess ? Ok(result.Data) : DecisionProblem(result.ErrorCode!, result.ErrorMessage!);
-    }
-
-    private ObjectResult DecisionProblem(string code, string detail)
-    {
-        var status = code switch
-        {
-            "BOOKING_ID_INVALID" => StatusCodes.Status400BadRequest,
-            "BOOKING_NOT_FOUND" => StatusCodes.Status404NotFound,
-            "BOOKING_NOT_OWNER" or "OWNER_INACTIVE" => StatusCodes.Status403Forbidden,
-            _ => StatusCodes.Status409Conflict,
-        };
-        return StatusCode(status, new ProblemDetails { Title = code, Detail = detail, Status = status });
+        return StatusCode(StatusCodes.Status410Gone, new ProblemDetails { Title = "MANUAL_APPROVAL_REMOVED", Detail = "Đơn thuê mới được chuyển thẳng sang thanh toán.", Status = StatusCodes.Status410Gone });
     }
 
     [HttpPost("validate-window")]
@@ -104,6 +80,8 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     public async Task<IActionResult> Create([FromBody] CreateBookingRequest request, CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId)) return Unauthorized();
+        if (request.ExpectedQuote is null)
+            return BookingProblem("QUOTE_REQUIRED", "Vui lòng xem báo giá trước khi đặt xe.");
 
         var result = await _bookingService.CreateAsync(accountId, request, ct);
         if (!result.IsSuccess) return BookingProblem(result.ErrorCode!, result.ErrorMessage!);
@@ -237,6 +215,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         {
             "BOOKING_NOT_FOUND" => StatusCodes.Status404NotFound,
             "FORBIDDEN" => StatusCodes.Status403Forbidden,
+            "QUOTE_CHANGED" or "SCHEDULE_CONFLICT" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         };
 

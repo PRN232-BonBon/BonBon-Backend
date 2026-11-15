@@ -118,6 +118,7 @@ public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepo
         string rentalType,
         DateTimeOffset startAt,
         DateTimeOffset endAt,
+        ExpectedBookingQuote? expectedQuote,
         CancellationToken ct = default)
     {
         const string sql = """
@@ -135,18 +136,20 @@ public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepo
 
         return await WithConnectionAsync(async connection =>
         {
-            await using var command = new NpgsqlCommand(sql, connection);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("customer_account_id", customerAccountId);
             command.Parameters.AddWithValue("vehicle_id", vehicleId);
             command.Parameters.AddWithValue("rental_type", rentalType);
             command.Parameters.AddWithValue("start_at", startAt.ToUniversalTime());
             command.Parameters.AddWithValue("end_at", endAt.ToUniversalTime());
 
-            await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, ct);
-            if (!await reader.ReadAsync(ct))
-                throw new InvalidOperationException("Database did not return the created booking.");
-
-            return new CreatedBooking(
+            CreatedBooking created;
+            await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, ct))
+            {
+                if (!await reader.ReadAsync(ct))
+                    throw new InvalidOperationException("Database did not return the created booking.");
+                created = new CreatedBooking(
                 reader.GetGuid(0),
                 reader.GetGuid(1),
                 reader.GetInt32(2),
@@ -159,6 +162,15 @@ public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepo
                 reader.IsDBNull(9) ? null : reader.GetString(9),
                 reader.GetString(10),
                 reader.GetString(11));
+            }
+            if (expectedQuote is not null && (created.BillableUnits != expectedQuote.BillableUnits
+                || created.UnitPrice != expectedQuote.UnitPrice || created.WeeklyDiscountPercent != expectedQuote.WeeklyDiscountPercent
+                || created.DiscountAmount != expectedQuote.DiscountAmount || created.QuotedRentalAmount != expectedQuote.QuotedRentalAmount
+                || created.IncludedMileageKm != expectedQuote.IncludedMileageKm || created.OverageFeePerKm != expectedQuote.OverageFeePerKm
+                || created.RentalTerms != expectedQuote.RentalTerms))
+                throw new BookingQuoteChangedException();
+            await transaction.CommitAsync(ct);
+            return created;
         }, ct);
     }
 

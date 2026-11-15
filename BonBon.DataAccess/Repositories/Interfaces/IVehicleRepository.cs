@@ -46,6 +46,7 @@ public sealed record OwnerVehicle(
     string? CoverImageUrl);
 
 public sealed record OwnerAvailabilityBlock(Guid BlockId, Guid VehicleId, DateTimeOffset StartAt, DateTimeOffset EndAt, string? Reason);
+public sealed record OccupiedVehicleInterval(DateTimeOffset StartAt, DateTimeOffset EndAt);
 
 public sealed record VehicleSearchFilter(
     string? Location,
@@ -97,6 +98,7 @@ public interface IVehicleRepository
 
     Task<IReadOnlyList<OwnerVehicle>> GetMineAsync(Guid ownerAccountId, CancellationToken ct = default);
     Task<IReadOnlyList<OwnerAvailabilityBlock>> GetOwnerBlocksAsync(Guid ownerAccountId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
+    Task<IReadOnlyList<OccupiedVehicleInterval>> GetOccupiedIntervalsAsync(Guid vehicleId, DateTimeOffset startAt, DateTimeOffset endAt, CancellationToken ct = default);
     Task<(byte[] Data, string ContentType)?> GetImageAsync(Guid imageId, CancellationToken ct = default);
     Task<IReadOnlyList<VehicleCatalogRecord>> SearchAsync(VehicleSearchFilter filter, CancellationToken ct = default);
 }

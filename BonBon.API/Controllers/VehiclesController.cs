@@ -131,6 +131,16 @@ public sealed class VehiclesController(
         return Ok(await _vehicleRepository.GetOwnerBlocksAsync(accountId, startAt.Value, endAt.Value, ct));
     }
 
+    [HttpGet("{vehicleId:guid}/occupied-intervals")]
+    [AllowAnonymous]
+    public async Task<IActionResult> OccupiedIntervals(Guid vehicleId, [FromQuery] DateTimeOffset? startAt, [FromQuery] DateTimeOffset? endAt, CancellationToken ct)
+    {
+        if (vehicleId == Guid.Empty || !startAt.HasValue || !endAt.HasValue || endAt <= startAt || endAt.Value - startAt.Value > TimeSpan.FromDays(93))
+            return ProblemResult("INVALID_CALENDAR_RANGE", "Vui lòng chọn khoảng lịch hợp lệ, tối đa 93 ngày.");
+        Response.Headers.CacheControl = "no-store";
+        return Ok(await _vehicleRepository.GetOccupiedIntervalsAsync(vehicleId, startAt.Value, endAt.Value, ct));
+    }
+
     [HttpGet("images/{imageId:guid}")]
     [AllowAnonymous]
     [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Any)]

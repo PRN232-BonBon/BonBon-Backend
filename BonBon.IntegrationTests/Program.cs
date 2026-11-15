@@ -105,7 +105,7 @@ class Program
             };
 
             var createResult = await bookingService.CreateAsync(customerId, validBookingReq);
-            Assert(createResult.IsSuccess && createResult.Data != null && createResult.Data.Status == "PendingApproval",
+            Assert(createResult.IsSuccess && createResult.Data != null && createResult.Data.Status == "AwaitingPayment",
                 "BE-01.3 Tạo đơn đặt xe hợp lệ",
                 $"(BookingId: {createResult.Data?.BookingId}, Status: {createResult.Data?.Status})");
 
@@ -113,20 +113,11 @@ class Program
 
             // 1.4 Chống tạo đơn trùng lặp khi gửi lại request
             var duplicateResult = await bookingService.CreateAsync(customerId, validBookingReq);
-            Assert(!duplicateResult.IsSuccess && duplicateResult.ErrorCode == "DUPLICATE_BOOKING",
+            Assert(!duplicateResult.IsSuccess && duplicateResult.ErrorCode == "SCHEDULE_CONFLICT",
                 "BE-01.4 Chống tạo đơn trùng lặp (Idempotency)",
                 $"(ErrorCode: {duplicateResult.ErrorCode}, Message: {duplicateResult.ErrorMessage})");
 
-            // 1.5 Chủ xe duyệt đơn (kiểm tra lại xe & lịch)
-            var approveResult = await bookingService.ApproveAsync(ownerAccountId: ownerId, bookingId: bookingId);
-            Assert(approveResult.IsSuccess && approveResult.Data?.Status == "AwaitingPayment",
-                "BE-01.5 Chủ xe duyệt đơn thành công",
-                $"(IsSuccess: {approveResult.IsSuccess})");
-
-            var replayResult = await bookingService.ApproveAsync(ownerAccountId: ownerId, bookingId: bookingId);
-            Assert(replayResult.IsSuccess && replayResult.Data?.IsReplay == true,
-                "BE-01.6 Duyệt lại cùng đơn không thay đổi quyết định hoặc giá",
-                $"(IsReplay: {replayResult.Data?.IsReplay})");
+            // Booking is held immediately without an owner-approval step.
 
             // ────────────────────────────────────────────────────────────────
             // BE-02 — API tìm xe theo nhu cầu thuê & ảnh DB

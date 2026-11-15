@@ -2,11 +2,36 @@ using BonBon.DataAccess.Repositories.Implementations;
 using BonBon.DataAccess.Repositories.Interfaces;
 using BonBon.Business.Services.Implementations;
 using BonBon.Business.DTOs.Vehicles;
+using Microsoft.EntityFrameworkCore;
 
 namespace BonBon.Tests.Integration;
 
 public class VehicleCatalogPostgresTests
 {
+    [LocalPostgresTheory]
+    [InlineData("1 Hai Trieu, TP.HCM", true)]
+    [InlineData("Quan 1, TP. Hồ Chí Minh", true)]
+    [InlineData("Phuong An Phu, TP. Thủ Đức", true)]
+    [InlineData("Quan Hoan Kiem, Ha Noi", false)]
+    public async Task Ho_chi_minh_search_recognizes_existing_address_variants(string address, bool expected)
+    {
+        await using var database = await DisposablePostgresDatabase.CreateAsync();
+        await using var context = database.CreateContext();
+        var connection = context.Database.GetDbConnection();
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE bonbon.vehicle SET pickup_address = @address, fuel_type = 'Gasoline', body_type = 'Sedan'";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "address";
+        parameter.Value = address;
+        command.Parameters.Add(parameter);
+        await command.ExecuteNonQueryAsync();
+        var filter = new VehicleSearchFilter("TP. Hồ Chí Minh", null, null, null, null, null, null, null, null);
+        var result = await new VehicleRepository(context).SearchAsync(filter);
+        if (expected) Assert.Equal(database.Vehicle, Assert.Single(result).Id);
+        else Assert.Empty(result);
+    }
+
     [LocalPostgresTheory]
     [InlineData("Hourly", 4)]
     [InlineData("Daily", 6)]
