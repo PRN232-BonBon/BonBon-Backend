@@ -87,6 +87,38 @@ public sealed class VehiclesController(
         return Ok(result.Data);
     }
 
+    [HttpGet("registrations/{vehicleId:guid}/rejected")]
+    [Authorize]
+    public async Task<IActionResult> RejectedRegistration(Guid vehicleId, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+        var json = await _vehicleRepository.GetRejectedRegistrationJsonAsync(accountId, vehicleId, ct);
+        return json is null ? NotFound() : Content(json, "application/json");
+    }
+
+    [HttpPost("registrations/{vehicleId:guid}/resubmit")]
+    [Authorize]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(90 * 1024 * 1024)]
+    public async Task<IActionResult> Resubmit(Guid vehicleId, [FromForm] string metadata,
+        [FromForm] List<IFormFile> vehicleImages, CancellationToken ct)
+    {
+        if (!TryGetAccountId(out var accountId)) return Unauthorized();
+        RegisterVehicleRequest? request;
+        try { request = JsonSerializer.Deserialize<RegisterVehicleRequest>(metadata, JsonOptions); }
+        catch (JsonException) { return ProblemResult("INVALID_METADATA", "Thông tin đăng ký xe không đúng định dạng."); }
+        if (request is null) return ProblemResult("INVALID_METADATA", "Thiếu thông tin đăng ký xe.");
+        if (vehicleImages.Count > 8) return ProblemResult("INVALID_IMAGE_COUNT", "Vui lòng chọn tối đa 8 ảnh xe.");
+        try
+        {
+            var images = new List<StoredImage>(vehicleImages.Count);
+            foreach (var image in vehicleImages) images.Add(await _imageProcessor.ProcessAsync(image, ct));
+            var result = await _vehicleService.ResubmitAsync(accountId, vehicleId, request, images, ct);
+            return result.IsSuccess ? Ok(result.Data) : ProblemResult(result.ErrorCode!, result.ErrorMessage!);
+        }
+        catch (InvalidDataException exception) { return ProblemResult("INVALID_IMAGE", exception.Message); }
+    }
+
     [HttpGet("owner-blocks")]
     [Authorize]
     [ProducesResponseType(typeof(IReadOnlyList<OwnerAvailabilityBlock>), StatusCodes.Status200OK)]

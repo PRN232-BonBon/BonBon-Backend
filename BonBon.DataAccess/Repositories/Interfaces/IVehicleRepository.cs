@@ -88,6 +88,8 @@ public sealed record VehicleCatalogRecord(
 
 public interface IVehicleRepository
 {
+    Task<string?> GetRejectedRegistrationJsonAsync(Guid ownerAccountId, Guid vehicleId, CancellationToken ct = default);
+    Task<RegisteredVehicle?> ResubmitAsync(Guid ownerAccountId, Guid vehicleId, VehicleRegistrationSubmission submission, CancellationToken ct = default);
     Task<RegisteredVehicle> RegisterAsync(
         Guid ownerAccountId,
         VehicleRegistrationSubmission submission,

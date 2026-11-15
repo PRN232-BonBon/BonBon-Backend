@@ -6,6 +6,7 @@ namespace BonBon.Business.Services.Interfaces;
 
 public interface IVehicleService
 {
+    Task<ServiceResult<VehicleRegistrationResponse>> ResubmitAsync(Guid ownerAccountId, Guid vehicleId, RegisterVehicleRequest request, IReadOnlyList<StoredImage> vehicleImages, CancellationToken ct = default);
     Task<ServiceResult<VehicleRegistrationResponse>> RegisterAsync(
         Guid ownerAccountId,
         RegisterVehicleRequest request,

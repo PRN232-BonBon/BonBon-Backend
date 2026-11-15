@@ -23,14 +23,22 @@ public sealed class VehicleService(
         RegisterVehicleRequest request,
         IReadOnlyList<StoredImage> vehicleImages,
         CancellationToken ct = default)
+        => await SubmitAsync(ownerAccountId, null, request, vehicleImages, ct);
+
+    public async Task<ServiceResult<VehicleRegistrationResponse>> ResubmitAsync(Guid ownerAccountId, Guid vehicleId,
+        RegisterVehicleRequest request, IReadOnlyList<StoredImage> vehicleImages, CancellationToken ct = default)
+        => await SubmitAsync(ownerAccountId, vehicleId, request, vehicleImages, ct);
+
+    private async Task<ServiceResult<VehicleRegistrationResponse>> SubmitAsync(Guid ownerAccountId, Guid? vehicleId,
+        RegisterVehicleRequest request, IReadOnlyList<StoredImage> vehicleImages, CancellationToken ct)
     {
-        if (vehicleImages.Count is < 1 or > 8)
+        if (vehicleImages.Count > 8 || (!vehicleId.HasValue && vehicleImages.Count < 1))
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_IMAGE_COUNT", "Vui lòng tải từ 1 đến 8 ảnh xe.");
         if (string.IsNullOrWhiteSpace(request.PlateNumber) || request.PlateNumber.Length > 30
             || string.IsNullOrWhiteSpace(request.Brand) || request.Brand.Length > 80
             || string.IsNullOrWhiteSpace(request.Model) || request.Model.Length > 100)
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_VEHICLE_INFO", "Thông tin nhận diện xe chưa hợp lệ.");
-        if (request.ProductionYear is < 1990 or > 2100 || request.Seats is < 4 or > 7)
+        if (request.ProductionYear < 1990 || request.ProductionYear > DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(7)).Year || request.Seats is < 4 or > 7)
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_VEHICLE_INFO", "Năm sản xuất hoặc số chỗ không hợp lệ.");
         if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Trim().Length is < 20 or > 2000
             || string.IsNullOrWhiteSpace(request.PickupAddress) || request.PickupAddress.Trim().Length is < 10 or > 1000)
@@ -39,7 +47,7 @@ public sealed class VehicleService(
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_PRICE", "Đơn giá thuê xe chưa hợp lệ.");
         if (!string.IsNullOrWhiteSpace(request.RentalTerms) && request.RentalTerms.Trim().Length is < 10 or > 1000)
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_RENTAL_TERMS", "Điều khoản thuê xe phải từ 10 đến 1.000 ký tự.");
-        if (request.Features.Length > 20 || request.Features.Any(string.IsNullOrWhiteSpace))
+        if (request.Features is null || request.Features.Length > 20 || request.Features.Any(string.IsNullOrWhiteSpace))
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_FEATURES", "Danh sách tiện nghi xe chưa hợp lệ.");
         if (!Transmissions.Contains(request.Transmission))
             return ServiceResult<VehicleRegistrationResponse>.Failure("INVALID_TRANSMISSION", "Loại truyền động không hợp lệ.");
@@ -56,7 +64,7 @@ public sealed class VehicleService(
 
         try
         {
-            var response = await _vehicleRepository.RegisterAsync(ownerAccountId, new VehicleRegistrationSubmission(
+            var submission = new VehicleRegistrationSubmission(
                 new VehicleRegistrationData(
                     request.PlateNumber.Trim(),
                     request.Brand.Trim(),
@@ -77,7 +85,12 @@ public sealed class VehicleService(
                     request.MileageLimitEnabled ? request.OverageFeePerKm : null,
                     string.IsNullOrWhiteSpace(request.RentalTerms) ? null : request.RentalTerms.Trim(),
                     request.Features.Select(item => item.Trim()).Distinct().ToArray()),
-                vehicleImages), ct);
+                vehicleImages);
+            var response = vehicleId.HasValue
+                ? await _vehicleRepository.ResubmitAsync(ownerAccountId, vehicleId.Value, submission, ct)
+                : await _vehicleRepository.RegisterAsync(ownerAccountId, submission, ct);
+            if (response is null)
+                return ServiceResult<VehicleRegistrationResponse>.Failure("REGISTRATION_NOT_EDITABLE", "Không tìm thấy hồ sơ bị từ chối hoặc hồ sơ đã được gửi lại.");
 
             return ServiceResult<VehicleRegistrationResponse>.Success(
                 new VehicleRegistrationResponse(response.VehicleId, response.Status, response.ImageCount));

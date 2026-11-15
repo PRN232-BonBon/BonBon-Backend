@@ -227,6 +227,8 @@ public class MockBookingRepository : IBookingRepository
 
 public class MockVehicleRepository : IVehicleRepository
 {
+    public Task<string?> GetRejectedRegistrationJsonAsync(Guid ownerAccountId, Guid vehicleId, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<RegisteredVehicle?> ResubmitAsync(Guid ownerAccountId, Guid vehicleId, VehicleRegistrationSubmission submission, CancellationToken ct = default) => throw new NotImplementedException();
     private readonly MockBookingRepository _bookingRepo;
 
     public MockVehicleRepository(MockBookingRepository bookingRepo)

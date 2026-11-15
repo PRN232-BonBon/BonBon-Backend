@@ -10,6 +10,104 @@ public sealed class VehicleRepository(BonBonDbContext db) : IVehicleRepository
 {
     private readonly BonBonDbContext _db = db;
 
+    public async Task<string?> GetRejectedRegistrationJsonAsync(Guid ownerAccountId, Guid vehicleId, CancellationToken ct = default)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync(ct);
+        try
+        {
+            await using var command = new NpgsqlCommand("""
+                SELECT json_build_object(
+                  'vehicleId', v.vehicle_id, 'rejectionReason', v.rejection_reason,
+                  'plateNumber', v.plate_number, 'brand', v.brand, 'model', v.model,
+                  'productionYear', v.production_year, 'seats', v.seats, 'transmission', v.transmission,
+                  'fuelType', v.fuel_type, 'bodyType', v.body_type, 'description', v.description,
+                  'pickupAddress', v.pickup_address, 'hourPrice', v.hour_price, 'dayPrice', v.day_price,
+                  'weeklyDiscountEnabled', v.weekly_discount_enabled, 'weeklyDiscountPercent', v.weekly_discount_percent,
+                  'mileageLimitEnabled', v.mileage_limit_enabled, 'dailyMileageLimitKm', v.daily_mileage_limit_km,
+                  'overageFeePerKm', v.overage_fee_per_km, 'rentalTerms', v.rental_terms, 'features', v.features,
+                  'imageUrls', COALESCE((SELECT json_agg(COALESCE(i.image_url, '/api/vehicles/images/' || i.vehicle_image_id::text)
+                    ORDER BY i.is_cover DESC, i.sort_order, i.vehicle_image_id) FROM bonbon.vehicle_image i WHERE i.vehicle_id = v.vehicle_id), '[]'::json)
+                )::text FROM bonbon.vehicle v
+                WHERE v.vehicle_id = @vehicle AND v.owner_account_id = @owner AND v.status = 'Rejected'
+                  AND EXISTS (SELECT 1 FROM bonbon.account a WHERE a.account_id = @owner AND a.status = 'Active')
+                """, connection);
+            command.Parameters.AddWithValue("vehicle", vehicleId);
+            command.Parameters.AddWithValue("owner", ownerAccountId);
+            return await command.ExecuteScalarAsync(ct) as string;
+        }
+        finally { if (shouldClose) await connection.CloseAsync(); }
+    }
+
+    public async Task<RegisteredVehicle?> ResubmitAsync(Guid ownerAccountId, Guid vehicleId, VehicleRegistrationSubmission submission, CancellationToken ct = default)
+    {
+        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync(ct);
+        try
+        {
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            var data = submission.Vehicle;
+            await using (var command = new NpgsqlCommand("""
+                UPDATE bonbon.vehicle SET plate_number=@plate, brand=@brand, model=@model, production_year=@year,
+                  seats=@seats, transmission=@transmission, fuel_type=@fuel, body_type=@body, description=@description,
+                  pickup_address=@address, hour_price=@hour, day_price=@day, weekly_discount_enabled=@discount_enabled,
+                  weekly_discount_percent=@discount, mileage_limit_enabled=@mileage_enabled, daily_mileage_limit_km=@mileage,
+                  overage_fee_per_km=@overage, rental_terms=@terms, features=@features,
+                  status='PendingApproval', submitted_at=now(), reviewed_at=NULL, reviewed_by=NULL
+                WHERE vehicle_id=@vehicle AND owner_account_id=@owner AND status='Rejected'
+                  AND EXISTS (SELECT 1 FROM bonbon.account a WHERE a.account_id=@owner AND a.status='Active')
+                  AND (@has_images OR EXISTS(SELECT 1 FROM bonbon.vehicle_image WHERE vehicle_id=@vehicle))
+                RETURNING vehicle_id
+                """, connection, transaction))
+            {
+                command.Parameters.AddWithValue("vehicle", vehicleId); command.Parameters.AddWithValue("owner", ownerAccountId);
+                command.Parameters.AddWithValue("has_images", submission.VehicleImages.Count > 0);
+                command.Parameters.AddWithValue("plate", data.PlateNumber); command.Parameters.AddWithValue("brand", data.Brand);
+                command.Parameters.AddWithValue("model", data.Model); command.Parameters.AddWithValue("year", data.ProductionYear);
+                command.Parameters.AddWithValue("seats", data.Seats); command.Parameters.AddWithValue("transmission", data.Transmission);
+                command.Parameters.AddWithValue("fuel", data.FuelType); command.Parameters.AddWithValue("body", data.BodyType);
+                command.Parameters.AddWithValue("description", data.Description); command.Parameters.AddWithValue("address", data.PickupAddress);
+                command.Parameters.AddWithValue("hour", data.HourPrice); command.Parameters.AddWithValue("day", data.DayPrice);
+                command.Parameters.AddWithValue("discount_enabled", data.WeeklyDiscountEnabled);
+                command.Parameters.AddWithValue("discount", (object?)data.WeeklyDiscountPercent ?? DBNull.Value);
+                command.Parameters.AddWithValue("mileage_enabled", data.MileageLimitEnabled);
+                command.Parameters.AddWithValue("mileage", (object?)data.DailyMileageLimitKm ?? DBNull.Value);
+                command.Parameters.AddWithValue("overage", (object?)data.OverageFeePerKm ?? DBNull.Value);
+                command.Parameters.AddWithValue("terms", (object?)data.RentalTerms ?? DBNull.Value);
+                command.Parameters.AddWithValue("features", data.Features);
+                if (await command.ExecuteScalarAsync(ct) is null) return null;
+            }
+
+            if (submission.VehicleImages.Count > 0)
+            {
+                await using var remove = new NpgsqlCommand("DELETE FROM bonbon.vehicle_image WHERE vehicle_id=@vehicle", connection, transaction);
+                remove.Parameters.AddWithValue("vehicle", vehicleId);
+                await remove.ExecuteNonQueryAsync(ct);
+                for (var i = 0; i < submission.VehicleImages.Count; i++)
+                {
+                    var image = submission.VehicleImages[i];
+                    await using var insert = new NpgsqlCommand("""
+                        INSERT INTO bonbon.vehicle_image(vehicle_id, is_cover, sort_order, image_data, content_type, byte_length, width, height)
+                        VALUES (@vehicle, @cover, @order, @data, 'image/webp', @length, @width, @height)
+                        """, connection, transaction);
+                    insert.Parameters.AddWithValue("vehicle", vehicleId); insert.Parameters.AddWithValue("cover", i == 0);
+                    insert.Parameters.AddWithValue("order", (short)i); insert.Parameters.AddWithValue("data", image.Data);
+                    insert.Parameters.AddWithValue("length", image.Data.Length); insert.Parameters.AddWithValue("width", image.Width);
+                    insert.Parameters.AddWithValue("height", image.Height);
+                    await insert.ExecuteNonQueryAsync(ct);
+                }
+            }
+            await using var count = new NpgsqlCommand("SELECT count(*)::integer FROM bonbon.vehicle_image WHERE vehicle_id=@vehicle", connection, transaction);
+            count.Parameters.AddWithValue("vehicle", vehicleId);
+            var imageCount = (int)(await count.ExecuteScalarAsync(ct) ?? 0);
+            await transaction.CommitAsync(ct);
+            return new RegisteredVehicle(vehicleId, "PendingApproval", imageCount);
+        }
+        finally { if (shouldClose) await connection.CloseAsync(); }
+    }
+
     public async Task<RegisteredVehicle> RegisterAsync(
         Guid ownerAccountId,
         VehicleRegistrationSubmission submission,
