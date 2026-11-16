@@ -9,6 +9,22 @@ namespace BonBon.Tests.Integration;
 public class PendingBookingHoldPostgresTests
 {
     [LocalPostgresFact]
+    public async Task Legacy_vehicle_without_fuel_type_allows_booking_details_and_cancellation()
+    {
+        await using var db = await DisposablePostgresDatabase.CreateAsync();
+        await db.ExecuteAsync($"UPDATE bonbon.vehicle SET fuel_type=NULL WHERE vehicle_id='{db.Vehicle}'");
+        await using var context = db.CreateContext();
+        var repository = new BookingRepository(context);
+        var detail = await repository.GetByIdAsync(db.FirstBooking);
+        Assert.NotNull(detail);
+        Assert.Null(detail.FuelType);
+        var service = new BookingService(repository);
+        var result = await service.CancelAsync(db.FirstBooking, db.Customer);
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Cancelled", await db.ScalarAsync<string>($"SELECT status FROM bonbon.booking WHERE booking_id='{db.FirstBooking}'"));
+    }
+
+    [LocalPostgresFact]
     public async Task Legacy_cutover_converts_only_one_overlapping_pending_request_without_changing_prices()
     {
         await using var db = await DisposablePostgresDatabase.CreateAsync();

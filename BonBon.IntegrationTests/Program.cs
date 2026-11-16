@@ -177,7 +177,7 @@ class Program
                 $"(Applied: {paymentApplied})");
 
             // 5.3 Chặn hoàn thành chuyến khi chưa trả xe
-            var earlyComplete = await bookingService.CompleteBookingAsync(bookingId, customerId, false);
+            var earlyComplete = await bookingService.CompleteBookingAsync(bookingId, ownerId, false);
             Assert(!earlyComplete.IsSuccess && earlyComplete.ErrorCode == "INVALID_STATUS",
                 "BE-05.3 Chặn hoàn thành chuyến khi chưa trả xe",
                 $"(ErrorCode: {earlyComplete.ErrorCode}, Message: {earlyComplete.ErrorMessage})");
@@ -243,16 +243,16 @@ class Program
                 "BE-06.3 Chống ghi phụ phí trùng lặp (Idempotent call)",
                 $"(Giữ nguyên ChargeId: {reCalc.Data?.ChargeId}, Amount: {reCalc.Data?.ExcessFeeAmount:N0} VND)");
 
-            // 6.3 Hoàn thành chuyến sau khi đã trả xe
-            var completeResult = await bookingService.CompleteBookingAsync(bookingId, customerId, false);
+            // 6.3 Chủ xe xác nhận; chuyến có phí chưa thể kết thúc trước thanh toán.
+            var completeResult = await bookingService.CompleteBookingAsync(bookingId, ownerId, false);
             Assert(completeResult.IsSuccess,
-                "BE-05.5 Hoàn thành chuyến hợp lệ sau khi trả xe -> Completed",
+                "BE-05.5 Chủ xe xác nhận trả xe -> AwaitingSettlement",
                 $"(IsSuccess: {completeResult.IsSuccess})");
 
             // 6.4 Kiểm tra BookingDetail có đủ cả 2 biên bản kiểm tra và phụ phí vượt km
             var detailResult = await bookingService.GetDetailAsync(bookingId, customerId, false);
-            Assert(detailResult.IsSuccess && detailResult.Data?.Status == "Completed",
-                "BE-05.6 Trạng thái đơn cuối cùng là 'Completed'",
+            Assert(detailResult.IsSuccess && detailResult.Data?.Status == "AwaitingSettlement",
+                "BE-05.6 Chờ thanh toán phụ phí trước khi hoàn thành",
                 $"(Status: {detailResult.Data?.Status})");
 
             Assert(detailResult.Data?.Inspections.Count == 2,

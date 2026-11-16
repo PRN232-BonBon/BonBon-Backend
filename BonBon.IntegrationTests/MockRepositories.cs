@@ -223,6 +223,37 @@ public class MockBookingRepository : IBookingRepository
         _bookings[idx] = current with { Status = newStatus };
         return Task.FromResult(true);
     }
+
+    public async Task<SubmittedReturn?> SubmitReturnAsync(Guid bookingId, Guid customerId, decimal odometerKm, decimal? fuelLevel, string? notes, CancellationToken ct = default)
+    {
+        var booking = await GetByIdAsync(bookingId, ct);
+        var pickup = await GetInspectionAsync(bookingId, "Pickup", ct);
+        if (booking is null || booking.Status != "InProgress" || booking.CustomerAccountId != customerId || pickup?.OdometerKm is null || odometerKm < pickup.OdometerKm) return null;
+        var distance = odometerKm - pickup.OdometerKm.Value;
+        var excess = booking.IncludedMileageKm is > 0 ? Math.Max(0, distance - booking.IncludedMileageKm.Value) : 0;
+        var fee = decimal.Round(excess * (booking.OverageFeePerKm ?? 0), 0, MidpointRounding.AwayFromZero);
+        await CreateInspectionAsync(bookingId, booking.VehicleId, "Return", odometerKm, fuelLevel, notes, null, ct);
+        var charge = fee > 0 ? await SaveExcessMileageChargeAsync(bookingId, excess, booking.OverageFeePerKm ?? 0, fee, ct) : null;
+        await UpdateStatusAsync(bookingId, "Returned", ["InProgress"], ct);
+        return new SubmittedReturn(distance, booking.IncludedMileageKm, excess, booking.OverageFeePerKm, fee, charge?.AdditionalChargeId);
+    }
+
+    public async Task<InspectionRecord?> ConfirmPickupAtomicAsync(Guid bookingId, Guid accountId, bool isAdmin, decimal odometerKm, decimal? fuelLevel, string? notes, CancellationToken ct = default)
+    {
+        var booking = await GetByIdAsync(bookingId, ct);
+        if (booking is null || booking.Status is not ("Confirmed" or "ReadyForPickup") || (!isAdmin && booking.CustomerAccountId != accountId && booking.OwnerAccountId != accountId)) return null;
+        var result = await CreateInspectionAsync(bookingId, booking.VehicleId, "Pickup", odometerKm, fuelLevel, notes, null, ct);
+        return await UpdateStatusAsync(bookingId, "InProgress", ["Confirmed", "ReadyForPickup"], ct) ? result : null;
+    }
+
+    public async Task<string?> ConfirmReturnByOwnerAsync(Guid bookingId, Guid ownerId, bool isAdmin, CancellationToken ct = default)
+    {
+        var booking = await GetByIdAsync(bookingId, ct);
+        if (booking is null || booking.Status != "Returned" || (!isAdmin && booking.OwnerAccountId != ownerId)) return null;
+        var status = _charges.Any(c => c.BookingId == bookingId && c.Status is "Pending" or "Proposed" or "Accepted") ? "AwaitingSettlement" : "Completed";
+        await UpdateStatusAsync(bookingId, status, ["Returned"], ct);
+        return status;
+    }
 }
 
 public class MockVehicleRepository : IVehicleRepository

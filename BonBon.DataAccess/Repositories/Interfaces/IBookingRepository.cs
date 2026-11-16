@@ -67,6 +67,9 @@ public sealed record AdditionalChargeRecord(
     string Status,
     DateTimeOffset ProposedAt);
 
+public sealed record SubmittedReturn(decimal DistanceKm, int? IncludedKm, decimal ExcessKm,
+    decimal? FeePerKm, decimal Fee, Guid? ChargeId);
+
 public sealed record BookingDetailRecord(
     Guid BookingId,
     string Status,
@@ -92,7 +95,7 @@ public sealed record BookingDetailRecord(
     string PickupAddress,
     short Seats,
     string Transmission,
-    string FuelType,
+    string? FuelType,
     // Customer
     Guid CustomerAccountId,
     string CustomerName,
@@ -165,4 +168,9 @@ public interface IBookingRepository
         string newStatus,
         string[] allowedCurrentStatuses,
         CancellationToken ct = default);
+    Task<SubmittedReturn?> SubmitReturnAsync(Guid bookingId, Guid customerId, decimal odometerKm,
+        decimal? fuelLevel, string? notes, CancellationToken ct = default);
+    Task<string?> ConfirmReturnByOwnerAsync(Guid bookingId, Guid ownerId, bool isAdmin, CancellationToken ct = default);
+    Task<InspectionRecord?> ConfirmPickupAtomicAsync(Guid bookingId, Guid accountId, bool isAdmin, decimal odometerKm,
+        decimal? fuelLevel, string? notes, CancellationToken ct = default);
 }

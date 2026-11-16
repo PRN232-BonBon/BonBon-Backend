@@ -8,10 +8,10 @@ namespace BonBon.DataAccess.Repositories.Implementations;
 public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNPAY_SANDBOX") : IPaymentRepository
 {
     private readonly string Provider = provider is "VNPAY_SANDBOX" or "SEPAY_SANDBOX" ? provider : throw new ArgumentException("Unsupported payment provider.");
-    private const string PaymentColumns = """
+    private string PaymentColumns => """
         p.payment_id, p.booking_id, p.provider_reference, p.amount, p.currency, p.status,
         p.created_at, p.expires_at, p.checkout_url, p.needs_reconciliation, p.provider_transaction_no, p.paid_at
-        """;
+        """ + (Provider == "SEPAY_SANDBOX" ? ", p.payment_purpose, p.additional_charge_id" : ", 'Rental'::text, NULL::uuid");
 
     public Task<PaymentCreateResult> CreateAsync(Guid customerId, Guid bookingId, string idempotencyKey,
         DateTimeOffset now, TimeSpan lifetime, Func<PaymentAttempt, string> buildCheckoutUrl, CancellationToken ct = default) =>
@@ -23,18 +23,31 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
             if (booking.CustomerId != customerId) return new(PaymentCreateOutcome.Forbidden);
             var active = await LockParticipantsAsync(connection, transaction, booking, ct);
             if (!active) return new(PaymentCreateOutcome.Inactive);
-            if (booking.Status != "AwaitingPayment" || booking.StartAt <= now || booking.HoldExpiresAt <= now || booking.VehicleStatus != "Available")
+            var isSettlement = Provider == "SEPAY_SANDBOX" && booking.Status == "AwaitingSettlement";
+            if (!isSettlement && (booking.Status != "AwaitingPayment" || booking.StartAt <= now || booking.HoldExpiresAt <= now || booking.VehicleStatus != "Available"))
                 return new(PaymentCreateOutcome.InvalidBooking);
-            if (booking.Currency != "VND" || booking.Amount <= 0 || booking.Amount > 9999999999m || decimal.Truncate(booking.Amount) != booking.Amount)
+            var purpose = isSettlement ? "ExcessMileage" : "Rental";
+            Guid? chargeId = null;
+            var amount = booking.Amount;
+            if (isSettlement)
+            {
+                await using var charge = Command("SELECT additional_charge_id, amount FROM bonbon.additional_charge WHERE booking_id=@booking AND status='Accepted' AND reason_code='EXCESS_MILEAGE' FOR UPDATE", connection, transaction, ("booking", bookingId));
+                await using var reader = await charge.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct)) return new(PaymentCreateOutcome.InvalidBooking);
+                chargeId = reader.GetGuid(0); amount = reader.GetDecimal(1);
+                if (await reader.ReadAsync(ct)) return new(PaymentCreateOutcome.InvalidBooking);
+            }
+            if (booking.Currency != "VND" || amount <= 0 || amount > 9999999999m || decimal.Truncate(amount) != amount)
                 return new(PaymentCreateOutcome.InvalidAmount);
 
-            await using (var paid = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND status = 'Succeeded')",
-                connection, transaction, ("booking", bookingId)))
+            var purposeFilter = Provider == "SEPAY_SANDBOX" ? " AND payment_purpose = @purpose" : "";
+            await using (var paid = Command($"SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND status = 'Succeeded'{purposeFilter})",
+                connection, transaction, ("booking", bookingId), ("purpose", purpose)))
                 if ((bool)(await paid.ExecuteScalarAsync(ct))!) return new(PaymentCreateOutcome.AlreadyPaid);
 
             PaymentAttempt? previous;
-            await using (var replay = Command($"SELECT {PaymentColumns} FROM bonbon.payment p WHERE p.booking_id = @booking AND p.provider = @provider AND p.idempotency_key = @key FOR UPDATE",
-                connection, transaction, ("booking", bookingId), ("provider", Provider), ("key", idempotencyKey)))
+            await using (var replay = Command($"SELECT {PaymentColumns} FROM bonbon.payment p WHERE p.booking_id = @booking AND p.provider = @provider AND p.idempotency_key = @key{purposeFilter} FOR UPDATE",
+                connection, transaction, ("booking", bookingId), ("provider", Provider), ("key", idempotencyKey), ("purpose", purpose)))
             {
                 await using var reader = await replay.ExecuteReaderAsync(ct);
                 previous = await reader.ReadAsync(ct) ? ReadPayment(reader) : null;
@@ -51,8 +64,8 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
                 return new(PaymentCreateOutcome.Reused, previous);
             }
             PaymentAttempt? open;
-            await using (var pending = Command($"SELECT {PaymentColumns} FROM bonbon.payment p WHERE p.booking_id = @booking AND p.provider = @provider AND (p.status IN ('Pending','Processing') OR p.needs_reconciliation) ORDER BY p.created_at FOR UPDATE",
-                connection, transaction, ("booking", bookingId), ("provider", Provider)))
+            await using (var pending = Command($"SELECT {PaymentColumns} FROM bonbon.payment p WHERE p.booking_id = @booking AND p.provider = @provider AND (p.status IN ('Pending','Processing') OR p.needs_reconciliation){purposeFilter} ORDER BY p.created_at FOR UPDATE",
+                connection, transaction, ("booking", bookingId), ("provider", Provider), ("purpose", purpose)))
             {
                 await using var reader = await pending.ExecuteReaderAsync(ct);
                 open = await reader.ReadAsync(ct) ? ReadPayment(reader) : null;
@@ -68,21 +81,23 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
                 return new(PaymentCreateOutcome.InProgress);
             }
             // Do not replace attempts owned by a different provider or legacy integration.
-            await using (var other = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND provider <> @provider AND (status IN ('Pending','Processing') OR needs_reconciliation))",
-                connection, transaction, ("booking", bookingId), ("provider", Provider)))
+            await using (var other = Command($"SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND provider <> @provider AND (status IN ('Pending','Processing') OR needs_reconciliation){purposeFilter})",
+                connection, transaction, ("booking", bookingId), ("provider", Provider), ("purpose", purpose)))
                 if ((bool)(await other.ExecuteScalarAsync(ct))!) return new(PaymentCreateOutcome.ReconciliationRequired);
 
             var id = Guid.NewGuid();
-            var expires = now.Add(lifetime) < booking.StartAt ? now.Add(lifetime) : booking.StartAt;
-            if (booking.HoldExpiresAt is { } holdExpiry && holdExpiry < expires) expires = holdExpiry;
-            var attempt = new PaymentAttempt(id, bookingId, id.ToString("N"), booking.Amount, booking.Currency, "Pending", now, expires, null);
+            var expires = isSettlement ? now.Add(lifetime) : now.Add(lifetime) < booking.StartAt ? now.Add(lifetime) : booking.StartAt;
+            if (!isSettlement && booking.HoldExpiresAt is { } holdExpiry && holdExpiry < expires) expires = holdExpiry;
+            var attempt = new PaymentAttempt(id, bookingId, id.ToString("N"), amount, booking.Currency, "Pending", now, expires, null, Purpose: purpose, AdditionalChargeId: chargeId);
             var url = buildCheckoutUrl(attempt); // Pure local signing; no external network call under locks.
-            await using var insert = Command("""
+            var purposeColumns = Provider == "SEPAY_SANDBOX" ? ", payment_purpose, additional_charge_id" : "";
+            var purposeValues = Provider == "SEPAY_SANDBOX" ? ", @purpose, @charge" : "";
+            await using var insert = Command($"""
                 INSERT INTO bonbon.payment (payment_id, booking_id, provider_reference, provider, amount,
-                    currency, status, created_at, expires_at, checkout_url, idempotency_key, updated_at)
-                VALUES (@id, @booking, @reference, @provider, @amount, 'VND', 'Pending', @now, @expires, @url, @key, @now)
+                    currency, status, created_at, expires_at, checkout_url, idempotency_key, updated_at{purposeColumns})
+                VALUES (@id, @booking, @reference, @provider, @amount, 'VND', 'Pending', @now, @expires, @url, @key, @now{purposeValues})
                 """, connection, transaction, ("id", id), ("booking", bookingId), ("reference", attempt.Reference),
-                ("provider", Provider), ("amount", attempt.Amount), ("now", now), ("expires", expires), ("url", url), ("key", idempotencyKey));
+                ("provider", Provider), ("amount", attempt.Amount), ("now", now), ("expires", expires), ("url", url), ("key", idempotencyKey), ("purpose", purpose), ("charge", chargeId));
             await insert.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);
             return new(PaymentCreateOutcome.Created, attempt with { CheckoutUrl = url });
@@ -135,20 +150,30 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
                 connection, transaction, ("id", payment.PaymentId), ("hash", notification.Fingerprint)))
                 if ((bool)(await duplicate.ExecuteScalarAsync(ct))!) return PaymentNotificationOutcome.Duplicate;
 
-            var active = await LockParticipantsAsync(connection, transaction, booking, ct) && booking.VehicleStatus == "Available";
+            var active = await LockParticipantsAsync(connection, transaction, booking, ct) &&
+                (payment.Purpose == "ExcessMileage" || booking.VehicleStatus == "Available");
+            var dueAmount = booking.Amount;
+            if (payment.Purpose == "ExcessMileage")
+            {
+                await using var charge = Command("SELECT amount FROM bonbon.additional_charge WHERE additional_charge_id=@charge AND booking_id=@booking AND reason_code='EXCESS_MILEAGE' AND status='Accepted' FOR UPDATE", connection, transaction,
+                    ("charge", payment.AdditionalChargeId), ("booking", bookingId));
+                var due = await charge.ExecuteScalarAsync(ct);
+                dueAmount = due is decimal value ? value : 0;
+            }
             bool otherSucceeded, transactionUsed;
-            await using (var others = Command("""
-                SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND payment_id <> @id AND status = 'Succeeded'),
+            var purposeFilter = Provider == "SEPAY_SANDBOX" ? " AND payment_purpose = @purpose" : "";
+            await using (var others = Command($"""
+                SELECT EXISTS (SELECT 1 FROM bonbon.payment WHERE booking_id = @booking AND payment_id <> @id AND status = 'Succeeded'{purposeFilter}),
                     EXISTS (SELECT 1 FROM bonbon.payment WHERE provider = @provider AND provider_transaction_no = @txn AND payment_id <> @id)
                 """, connection, transaction, ("booking", bookingId), ("id", payment.PaymentId),
-                ("provider", Provider), ("txn", notification.TransactionNo)))
+                ("provider", Provider), ("txn", notification.TransactionNo), ("purpose", payment.Purpose)))
             {
                 await using var reader = await others.ExecuteReaderAsync(ct);
                 await reader.ReadAsync(ct);
                 otherSucceeded = reader.GetBoolean(0);
                 transactionUsed = reader.GetBoolean(1);
             }
-            var decision = decide(new(payment, booking.Status, booking.Amount, booking.StartAt, active, otherSucceeded, transactionUsed, receivedAt));
+            var decision = decide(new(payment, booking.Status, dueAmount, booking.StartAt, active, otherSucceeded, transactionUsed, receivedAt));
             if (decision.Action == PaymentNotificationAction.InvalidReference) return PaymentNotificationOutcome.NotFound;
             if (decision.Action == PaymentNotificationAction.InvalidAmount) return PaymentNotificationOutcome.InvalidAmount;
 
@@ -187,9 +212,20 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
                 await update.ExecuteNonQueryAsync(ct);
                 if (decision.Action == PaymentNotificationAction.Success)
                 {
-                    await using var confirm = Command("UPDATE bonbon.booking SET status = 'Confirmed' WHERE booking_id = @id AND status = 'AwaitingPayment'",
-                        connection, transaction, ("id", bookingId));
-                    if (await confirm.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Locked booking changed during payment confirmation.");
+                    if (payment.Purpose == "ExcessMileage")
+                    {
+                        await using var paidCharge = Command("UPDATE bonbon.additional_charge SET status='Paid' WHERE additional_charge_id=@charge AND booking_id=@id AND status='Accepted' AND amount=@amount", connection, transaction,
+                            ("charge", payment.AdditionalChargeId), ("id", bookingId), ("amount", payment.Amount));
+                        if (await paidCharge.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Locked additional charge changed.");
+                        await using var finish = Command("UPDATE bonbon.booking SET status='Completed' WHERE booking_id=@id AND status='AwaitingSettlement' AND NOT EXISTS (SELECT 1 FROM bonbon.additional_charge WHERE booking_id=@id AND status IN ('Proposed','Accepted'))", connection, transaction, ("id", bookingId));
+                        await finish.ExecuteNonQueryAsync(ct);
+                    }
+                    else
+                    {
+                        await using var confirm = Command("UPDATE bonbon.booking SET status = 'Confirmed' WHERE booking_id = @id AND status = 'AwaitingPayment'",
+                            connection, transaction, ("id", bookingId));
+                        if (await confirm.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Locked booking changed during payment confirmation.");
+                    }
                 }
                 else if (decision.Action == PaymentNotificationAction.Failure && booking.HoldExpiresAt is not null)
                 {
@@ -269,7 +305,7 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
     private static PaymentAttempt ReadPayment(NpgsqlDataReader reader) => new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
         reader.GetDecimal(3), reader.GetString(4), reader.GetString(5), reader.GetFieldValue<DateTimeOffset>(6), reader.GetFieldValue<DateTimeOffset>(7),
         reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9), reader.IsDBNull(10) ? null : reader.GetString(10),
-        reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11));
+        reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11), reader.GetString(12), reader.IsDBNull(13) ? null : reader.GetGuid(13));
 
     private static NpgsqlCommand Command(string sql, NpgsqlConnection connection, NpgsqlTransaction? transaction, params (string Name, object? Value)[] parameters)
     {
@@ -301,15 +337,6 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
             await using (var guard = Command("""
                 SELECT to_regclass('bonbon.payment_gateway_schema') IS NOT NULL
                     AND to_regclass('bonbon.payment_notification') IS NOT NULL
-                    AND to_regclass('bonbon.uq_vnpay_sandbox_active') IS NOT NULL
-                    AND to_regclass('bonbon.uq_vnpay_sandbox_idempotency') IS NOT NULL
-                    AND to_regclass('bonbon.uq_vnpay_sandbox_accepted_success') IS NOT NULL
-                    AND to_regclass('bonbon.uq_vnpay_sandbox_transaction') IS NOT NULL
-                    AND (SELECT count(*) = 4 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-                        JOIN pg_namespace n ON n.oid = c.relnamespace
-                        WHERE n.nspname = 'bonbon' AND i.indisunique AND i.indisvalid AND i.indisready
-                          AND c.relname IN ('uq_vnpay_sandbox_active', 'uq_vnpay_sandbox_idempotency',
-                            'uq_vnpay_sandbox_accepted_success', 'uq_vnpay_sandbox_transaction'))
                     AND (SELECT count(*) = 9 FROM information_schema.columns WHERE table_schema = 'bonbon' AND table_name = 'payment'
                         AND column_name IN ('idempotency_key','checkout_url','expires_at','provider_transaction_no','response_code',
                             'transaction_status','updated_at','needs_reconciliation','reconciliation_reason'))
@@ -318,9 +345,28 @@ public sealed class PaymentRepository(BonBonDbContext db, string provider = "VNP
             await using (var version = Command("SELECT EXISTS (SELECT 1 FROM bonbon.payment_gateway_schema WHERE version = 1)", connection, null))
                 if (!(bool)(await version.ExecuteScalarAsync(ct))!) throw new PaymentSchemaUnavailableException();
 
+            if (Provider == "VNPAY_SANDBOX") {
+                await using var legacyGuard = Command("""
+                    SELECT (SELECT count(*) = 4 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'bonbon' AND i.indisunique AND i.indisvalid AND i.indisready
+                          AND c.relname IN ('uq_vnpay_sandbox_active', 'uq_vnpay_sandbox_idempotency',
+                            'uq_vnpay_sandbox_accepted_success', 'uq_vnpay_sandbox_transaction'))
+                    """, connection, null);
+                if (await legacyGuard.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
+            }
             if(Provider=="SEPAY_SANDBOX") {
                 await using var guard=Command("SELECT to_regclass('bonbon.sepay_gateway_schema') IS NOT NULL AND to_regclass('bonbon.sepay_payment_evidence') IS NOT NULL AND to_regclass('bonbon.sepay_rejected_notification') IS NOT NULL",connection,null);
                 if(await guard.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
+                await using var returnSchema = Command("SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='bonbon' AND table_name='payment' AND column_name IN ('payment_purpose','additional_charge_id')", connection, null);
+                if (await returnSchema.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
+                await using var returnIndexes = Command("""
+                    SELECT count(*)=4 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+                    WHERE n.nspname='bonbon' AND i.indisunique AND i.indisvalid AND i.indisready
+                      AND c.relname IN ('uq_sepay_sandbox_active','uq_sepay_sandbox_accepted_success','uq_sandbox_active_booking','uq_sandbox_accepted_booking')
+                      AND pg_get_indexdef(i.indexrelid) LIKE '%(booking_id, payment_purpose)%'
+                    """, connection, null);
+                if (await returnIndexes.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
                 await using var marker=Command("SELECT EXISTS(SELECT 1 FROM bonbon.sepay_gateway_schema WHERE version=1) AND (SELECT count(*)=4 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='bonbon' AND i.indisunique AND i.indisvalid AND i.indisready AND c.relname IN ('uq_sepay_sandbox_idempotency','uq_sepay_sandbox_active','uq_sepay_sandbox_accepted_success','uq_sepay_sandbox_transaction'))",connection,null);
                 if(await marker.ExecuteScalarAsync(ct) is not true) throw new PaymentSchemaUnavailableException();
             }

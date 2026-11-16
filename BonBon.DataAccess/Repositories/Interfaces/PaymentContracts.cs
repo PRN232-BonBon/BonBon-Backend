@@ -3,7 +3,8 @@ namespace BonBon.DataAccess.Repositories.Interfaces;
 public sealed record PaymentAttempt(
     Guid PaymentId, Guid BookingId, string Reference, decimal Amount, string Currency, string Status,
     DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string? CheckoutUrl,
-    bool NeedsReconciliation = false, string? TransactionNo = null, DateTimeOffset? PaidAt = null);
+    bool NeedsReconciliation = false, string? TransactionNo = null, DateTimeOffset? PaidAt = null,
+    string Purpose = "Rental", Guid? AdditionalChargeId = null);
 
 public enum PaymentCreateOutcome
 {

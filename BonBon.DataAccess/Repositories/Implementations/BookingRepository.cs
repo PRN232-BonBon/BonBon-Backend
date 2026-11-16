@@ -272,7 +272,7 @@ public sealed partial class BookingRepository(BonBonDbContext db) : IBookingRepo
                         reader.GetString(20),
                         reader.GetInt16(21),
                         reader.GetString(22),
-                        reader.GetString(23),
+                        reader.IsDBNull(23) ? null : reader.GetString(23),
                         reader.GetGuid(24),
                         reader.GetString(25),
                         reader.GetString(26),

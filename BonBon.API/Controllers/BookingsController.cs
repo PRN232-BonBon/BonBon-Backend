@@ -203,6 +203,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
     }
 
     [HttpPost("{id:guid}/complete")]
+    [HttpPost("{id:guid}/return/confirmation")]
     [Authorize]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -215,7 +216,7 @@ public sealed class BookingsController(IBookingService bookingService) : Control
         var isAdmin = User.IsInRole("Admin");
         var result = await _bookingService.CompleteBookingAsync(id, accountId, isAdmin, ct);
         return result.IsSuccess
-            ? Ok(new { message = "Chuyến đi đã hoàn thành thành công." })
+            ? Ok(new { message = "Đã xác nhận nhận lại xe." })
             : BookingProblem(result.ErrorCode!, result.ErrorMessage!);
     }
 

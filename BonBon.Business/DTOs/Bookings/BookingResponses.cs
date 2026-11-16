@@ -67,7 +67,7 @@ public sealed record BookingVehicleInfo(
     string PickupAddress,
     short Seats,
     string Transmission,
-    string FuelType);
+    string? FuelType);
 
 public sealed record BookingCustomerInfo(
     Guid CustomerId,

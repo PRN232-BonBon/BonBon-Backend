@@ -35,5 +35,6 @@
     <None Include="../database/proposals/005_booking_quote_guard.sql" Link="Sql/005_booking_quote_guard.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/006_momo_sandbox.sql" Link="Sql/006_momo_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/007_sepay_sandbox.sql" Link="Sql/007_sepay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/proposals/008_sepay_return_settlement.sql" Link="Sql/008_sepay_return_settlement.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

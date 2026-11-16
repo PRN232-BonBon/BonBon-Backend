@@ -26,9 +26,9 @@ public static class PaymentNotificationPolicy
                 : payment.NeedsReconciliation ? "PREVIOUS_RECONCILIATION_REQUIRED"
                 : notification.PaidAt is null || notification.PaidAt < payment.CreatedAt.AddSeconds(-1) || notification.PaidAt > context.ReceivedAt.AddMinutes(2) ? "INVALID_PAYMENT_TIME"
                 : context.ReceivedAt >= payment.ExpiresAt || notification.PaidAt >= payment.ExpiresAt ? "LATE_PAYMENT"
-                : context.BookingStatus != "AwaitingPayment" ? "BOOKING_NOT_PAYABLE"
+                : context.BookingStatus != (payment.Purpose == "ExcessMileage" ? "AwaitingSettlement" : "AwaitingPayment") ? "BOOKING_NOT_PAYABLE"
                 : context.BookingAmount != payment.Amount ? "BOOKING_AMOUNT_CHANGED"
-                : context.BookingStartAt <= context.ReceivedAt ? "PICKUP_TIME_PASSED"
+                : payment.Purpose == "Rental" && context.BookingStartAt <= context.ReceivedAt ? "PICKUP_TIME_PASSED"
                 : !context.ParticipantsActive ? "PARTICIPANTS_INACTIVE" : null;
             return reason is null ? new(PaymentNotificationAction.Success) : new(PaymentNotificationAction.ReconcileSuccess, reason);
         }

@@ -22,9 +22,8 @@ public sealed class SePayCheckoutApiTests
 {
     private static TestServer Server(ISePayCheckoutService checkout)
     {
-        var old = new Mock<IPaymentService>(MockBehavior.Strict);
         return new(new WebHostBuilder().ConfigureServices(s => {
-            s.AddSingleton(old.Object); s.AddSingleton(checkout); s.Configure<PaymentReturnOptions>(_ => { });
+            s.AddSingleton(checkout);
             s.AddControllers().AddApplicationPart(typeof(PaymentController).Assembly);
             s.AddAuthentication("Test").AddScheme<AuthenticationSchemeOptions, TestAuthentication>("Test", _ => { });
             s.AddAuthorization();

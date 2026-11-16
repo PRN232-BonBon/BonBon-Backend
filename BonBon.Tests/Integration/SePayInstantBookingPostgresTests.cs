@@ -13,14 +13,23 @@ namespace BonBon.Tests.Integration;
 public sealed class SePayInstantBookingPostgresTests
 {
     [LocalPostgresTheory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Instant_hold_sepay_checkout_and_verified_ipn_are_handled_safely(bool late)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Instant_hold_sepay_checkout_and_verified_ipn_are_handled_safely(bool late, bool withoutLegacyIndexes)
     {
         await using var db = await DisposablePostgresDatabase.CreateAsync();
         await db.ExecuteAsync($"DELETE FROM bonbon.booking WHERE vehicle_id='{db.Vehicle}'");
-        foreach (var file in new[] { "004_vnpay_sandbox.sql", "005_booking_quote_guard.sql", "006_momo_sandbox.sql", "007_sepay_sandbox.sql", "012_weekly_discount_duration.sql" })
+        foreach (var file in new[] { "004_vnpay_sandbox.sql", "005_booking_quote_guard.sql", "006_momo_sandbox.sql", "007_sepay_sandbox.sql", "008_sepay_return_settlement.sql", "012_weekly_discount_duration.sql" })
             await db.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", file)));
+        if (withoutLegacyIndexes)
+            await db.ExecuteAsync("""
+                DROP INDEX bonbon.uq_vnpay_sandbox_active;
+                DROP INDEX bonbon.uq_vnpay_sandbox_idempotency;
+                DROP INDEX bonbon.uq_vnpay_sandbox_accepted_success;
+                DROP INDEX bonbon.uq_vnpay_sandbox_transaction;
+                """);
 
         await using var context = db.CreateContext();
         var bookings = new BookingService(new BookingRepository(context));

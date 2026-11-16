@@ -42,7 +42,7 @@ public sealed class PaymentService(IPaymentRepository repository, IPaymentGatewa
                 PaymentCreateOutcome.Forbidden => ("PAYMENT_FORBIDDEN", "Bạn không phải khách hàng của đơn đặt xe."),
                 PaymentCreateOutcome.Inactive => ("PAYMENT_ACTOR_INACTIVE", "Tài khoản hoặc vai trò của các bên không còn hoạt động."),
                 PaymentCreateOutcome.InvalidBooking => ("BOOKING_NOT_PAYABLE", "Chỉ được thanh toán đơn đang chờ thanh toán và chưa đến giờ nhận xe."),
-                PaymentCreateOutcome.InvalidAmount => ("PAYMENT_AMOUNT_INVALID", "Số tiền không đáp ứng giới hạn VNPay hoặc không phải VND nguyên."),
+                PaymentCreateOutcome.InvalidAmount => ("PAYMENT_AMOUNT_INVALID", "Số tiền không đáp ứng giới hạn thanh toán hoặc không phải VND nguyên."),
                 PaymentCreateOutcome.AlreadyPaid => ("BOOKING_ALREADY_PAID", "Đơn đặt xe đã có khoản thanh toán thành công."),
                 PaymentCreateOutcome.InProgress => ("PAYMENT_IN_PROGRESS", "Đã có lần thanh toán đang xử lý. Hãy dùng lại yêu cầu ban đầu hoặc kiểm tra trạng thái."),
                 PaymentCreateOutcome.ReconciliationRequired => ("PAYMENT_RECONCILIATION_REQUIRED", "Giao dịch cần đối soát trước khi tạo lần thanh toán mới."),
