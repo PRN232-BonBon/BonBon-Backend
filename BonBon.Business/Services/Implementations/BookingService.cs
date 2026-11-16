@@ -537,6 +537,9 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
                 return ServiceResult<RentalWindowResponse>.Failure("INVALID_TIME_SLOT", "Giờ nhận xe phải theo bước 30 phút.");
             if (wholeHours < 4 || wholeHours > 8 || wholeHours != Math.Truncate(wholeHours))
                 return ServiceResult<RentalWindowResponse>.Failure("INVALID_HOURLY_DURATION", "Thuê theo giờ áp dụng từ 4 đến 8 giờ nguyên.");
+            var localEnd = endAt.ToOffset(VietnamOffset);
+            if (localEnd.Date != localStart.Date || localStart.TimeOfDay < TimeSpan.FromHours(5) || localEnd.TimeOfDay > TimeSpan.FromHours(22))
+                return ServiceResult<RentalWindowResponse>.Failure("HOURLY_OUTSIDE_OPERATING_HOURS", "Thuê theo giờ cần nhận và trả xe trong khung 05:00–22:00 cùng ngày.");
 
             units = (int)wholeHours;
             unitLabel = "giờ";

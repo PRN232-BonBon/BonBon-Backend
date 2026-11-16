@@ -105,4 +105,23 @@ public class BookingDecisionServiceTests
         Assert.True(result.IsSuccess);
         Assert.Equal(units, result.Data!.BillableUnits);
     }
+
+    [Theory]
+    [InlineData(4, 30, 4, false)]
+    [InlineData(5, 0, 4, true)]
+    [InlineData(14, 0, 8, true)]
+    [InlineData(14, 30, 8, false)]
+    [InlineData(18, 0, 4, true)]
+    [InlineData(18, 30, 4, false)]
+    [InlineData(22, 0, 4, false)]
+    public void Hourly_rentals_must_start_and_end_between_5_and_22_vietnam_time(int hour, int minute, int duration, bool valid)
+    {
+        var start = new DateTimeOffset(2035, 1, 1, hour, minute, 0, TimeSpan.FromHours(7));
+        var result = new BookingService(_repository.Object).ValidateWindow(new()
+        {
+            RentalType = "Hourly", StartAt = start, EndAt = start.AddHours(duration),
+        });
+        Assert.Equal(valid, result.IsSuccess);
+        if (!valid) Assert.Equal("HOURLY_OUTSIDE_OPERATING_HOURS", result.ErrorCode);
+    }
 }
