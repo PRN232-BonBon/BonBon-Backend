@@ -8,39 +8,41 @@ namespace BonBon.API.Services;
 
 /// <summary>
 /// Gửi mail qua Gmail SMTP (cần App Password, xem SmtpOptions).
-/// Chưa cấu hình: ở Development ghi OTP ra log để dev/test; ở môi trường khác
-/// ném lỗi để PasswordResetService trả EMAIL_SEND_FAILED thay vì im lặng.
+/// Chưa cấu hình: luôn ném lỗi để PasswordResetService trả EMAIL_SEND_FAILED,
+/// tránh trường hợp báo "đã gửi" nhưng thực ra không có mail nào đi (hay gặp
+/// khi máy khác chưa tạo appsettings.Local.json vì file này bị gitignore).
+/// OTP vẫn được ghi ra log để dev có thể lấy tay khi Gmail chưa sẵn sàng.
 /// </summary>
 public sealed class SmtpEmailSender(
     IOptions<SmtpOptions> options,
-    ILogger<SmtpEmailSender> logger,
-    IWebHostEnvironment env) : IEmailSender
+    ILogger<SmtpEmailSender> logger) : IEmailSender
 {
     private readonly SmtpOptions _smtp = options.Value;
     private readonly ILogger<SmtpEmailSender> _logger = logger;
-    private readonly IWebHostEnvironment _env = env;
 
     public async Task SendPasswordResetOtpAsync(string toEmail, string otp, int expiryMinutes, CancellationToken ct = default)
     {
         if (!_smtp.IsConfigured)
         {
-            if (_env.IsDevelopment())
-            {
-                _logger.LogWarning("Smtp chưa cấu hình — OTP đặt lại mật khẩu (dev) cho {Email}: {Otp}", toEmail, otp);
-                return;
-            }
-            throw new InvalidOperationException("Smtp is not configured.");
+            // Ghi OTP ra log để dev tự lấy tay khi Gmail chưa sẵn, NHƯNG vẫn ném lỗi
+            // để API trả 400 EMAIL_SEND_FAILED thay vì báo "đã gửi" giả — đây là lý do
+            // máy khác (thiếu appsettings.Local.json vì file này bị gitignore) cứ báo
+            // thành công mà không bao giờ có mail.
+            _logger.LogWarning("Smtp chưa cấu hình — OTP đặt lại mật khẩu cho {Email}: {Otp}", toEmail, otp);
+            throw new InvalidOperationException(
+                "Smtp is not configured. Tạo BonBon.API/appsettings.Local.json (xem appsettings.Smtp.example.json) "
+                + "hoặc đặt biến môi trường Smtp__Username / Smtp__AppPassword / Smtp__FromAddress.");
         }
 
         using var client = new SmtpClient(_smtp.Host, _smtp.Port)
         {
             EnableSsl = true,
-            Credentials = new NetworkCredential(_smtp.Username, _smtp.AppPassword),
+            Credentials = new NetworkCredential(_smtp.NormalizedUsername, _smtp.NormalizedAppPassword),
             Timeout = 15_000,
         };
         using var message = new MailMessage
         {
-            From = new MailAddress(_smtp.FromAddress, _smtp.FromName),
+            From = new MailAddress(_smtp.NormalizedFromAddress, _smtp.FromName),
             Subject = "[BonBon] Mã OTP đặt lại mật khẩu",
             IsBodyHtml = true,
             Body = BuildBody(otp, expiryMinutes),

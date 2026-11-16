@@ -24,7 +24,15 @@ public sealed class SmtpOptions
     public int ResendCooldownSeconds { get; set; } = 60;
 
     public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(Username)
-        && !string.IsNullOrWhiteSpace(AppPassword)
-        && !string.IsNullOrWhiteSpace(FromAddress);
+        !string.IsNullOrWhiteSpace(NormalizedUsername)
+        && !string.IsNullOrWhiteSpace(NormalizedAppPassword)
+        && !string.IsNullOrWhiteSpace(NormalizedFromAddress);
+
+    /// <summary>Mật khẩu ứng dụng Gmail thường được copy kèm dấu cách — SMTP cần dạng liền.</summary>
+    public string NormalizedAppPassword =>
+        (AppPassword ?? string.Empty).Replace(" ", string.Empty).Replace("\t", string.Empty);
+
+    public string NormalizedUsername => (Username ?? string.Empty).Trim();
+
+    public string NormalizedFromAddress => (FromAddress ?? string.Empty).Trim();
 }

@@ -44,14 +44,15 @@ public class PasswordResetService(
         var otp = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 
         await _otps.ConsumeActiveForEmailAsync(email, ct);
-        await _otps.AddAsync(new PasswordResetOtp
+        var created = new PasswordResetOtp
         {
             Id = Guid.NewGuid(),
             Email = email,
             OtpHash = Hash(otp),
             ExpiresAt = now.AddMinutes(_smtp.OtpExpiryMinutes),
             CreatedAt = now,
-        }, ct);
+        };
+        await _otps.AddAsync(created, ct);
         await _otps.SaveChangesAsync(ct);
 
         try
@@ -61,6 +62,17 @@ public class PasswordResetService(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Gửi OTP đặt lại mật khẩu tới {Email} thất bại.", account.Email);
+            // Xóa OTP vừa tạo để lần bấm "Gửi lại" không bị cooldown chặn —
+            // nếu không, user sẽ thấy báo "đã gửi" nhưng thực ra mail chưa bao giờ đi.
+            try
+            {
+                created.ConsumedAt = DateTimeOffset.UtcNow;
+                await _otps.SaveChangesAsync(ct);
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogWarning(cleanupEx, "Không thể dọn OTP lỗi cho {Email}.", account.Email);
+            }
             return ServiceResult.Failure(
                 "EMAIL_SEND_FAILED", "Không thể gửi email lúc này. Vui lòng thử lại sau.");
         }
