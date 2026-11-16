@@ -123,13 +123,15 @@ public class BookingDecisionServiceTests
         Assert.Equal(duration, result.Data!.BillableUnits);
     }
 
-    [Fact]
-    public void Pickup_in_the_past_is_rejected()
+    [Theory]
+    [InlineData("Hourly", 4)]
+    [InlineData("Daily", 24)]
+    public void Pickup_in_the_past_is_rejected(string rentalType, int durationHours)
     {
         var start = DateTimeOffset.UtcNow.AddMinutes(-1);
         var result = new BookingService(_repository.Object).ValidateWindow(new()
         {
-            RentalType = "Hourly", StartAt = start, EndAt = start.AddHours(4),
+            RentalType = rentalType, StartAt = start, EndAt = start.AddHours(durationHours),
         });
         Assert.Equal("PAST_START_TIME", result.ErrorCode);
     }
