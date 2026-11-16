@@ -493,8 +493,8 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         if (startAt == default || endAt == default || endAt <= startAt)
             return ServiceResult<RentalWindowResponse>.Failure("INVALID_INTERVAL", "Thời gian trả xe phải sau thời gian nhận xe.");
 
-        // BE-01: Chặn đặt trong quá khứ (cho phép 2 phút buffer cho độ lệch đồng hồ máy khách)
-        if (startAt < DateTimeOffset.UtcNow.AddMinutes(-2))
+        // The database also requires the pickup instant to be strictly in the future.
+        if (startAt <= DateTimeOffset.UtcNow)
             return ServiceResult<RentalWindowResponse>.Failure("PAST_START_TIME", "Thời gian nhận xe không được ở trong quá khứ.");
 
         var duration = endAt - startAt;
@@ -505,14 +505,10 @@ public sealed class BookingService(IBookingRepository bookingRepository) : IBook
         {
             var localStart = startAt.ToOffset(VietnamOffset);
             var wholeHours = duration.TotalMinutes / 60;
-            if (localStart.Second != 0 || localStart.Minute is not (0 or 30))
+            if (localStart.Ticks % TimeSpan.TicksPerMinute != 0 || localStart.Minute is not (0 or 30))
                 return ServiceResult<RentalWindowResponse>.Failure("INVALID_TIME_SLOT", "Giờ nhận xe phải theo bước 30 phút.");
             if (wholeHours < 4 || wholeHours > 8 || wholeHours != Math.Truncate(wholeHours))
                 return ServiceResult<RentalWindowResponse>.Failure("INVALID_HOURLY_DURATION", "Thuê theo giờ áp dụng từ 4 đến 8 giờ nguyên.");
-            var localEnd = endAt.ToOffset(VietnamOffset);
-            if (localEnd.Date != localStart.Date || localStart.TimeOfDay < TimeSpan.FromHours(5) || localEnd.TimeOfDay > TimeSpan.FromHours(22))
-                return ServiceResult<RentalWindowResponse>.Failure("HOURLY_OUTSIDE_OPERATING_HOURS", "Thuê theo giờ cần nhận và trả xe trong khung 05:00–22:00 cùng ngày.");
-
             units = (int)wholeHours;
             unitLabel = "giờ";
         }
