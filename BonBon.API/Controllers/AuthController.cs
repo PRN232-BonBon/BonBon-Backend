@@ -2,6 +2,7 @@ using BonBon.Business.DTOs.Auth;
 using BonBon.Business.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace BonBon.API.Controllers;
@@ -9,9 +10,10 @@ namespace BonBon.API.Controllers;
 [ApiController]
 [Route("api/auth")]
 [Produces("application/json")]
-public class AuthController(IAuthService authService) : ControllerBase
+public class AuthController(IAuthService authService, IPasswordResetService passwordResetService) : ControllerBase
 {
     private readonly IAuthService _authService = authService;
+    private readonly IPasswordResetService _passwordResetService = passwordResetService;
 
     // -------------------------------------------------------------------------
     // POST /api/auth/register
@@ -197,6 +199,56 @@ public class AuthController(IAuthService authService) : ControllerBase
         if (!Guid.TryParse(claim, out var accountId)) return Unauthorized();
 
         var result = await _authService.ChangePasswordAsync(accountId, request, ct);
+        if (!result.IsSuccess)
+            return BadRequest(new ProblemDetails
+            {
+                Title = result.ErrorCode,
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status400BadRequest,
+            });
+
+        return NoContent();
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/auth/forgot-password
+    // -------------------------------------------------------------------------
+    /// <summary>Gửi OTP đặt lại mật khẩu về Gmail (luôn 202 để chống liệt kê tài khoản).</summary>
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    [EnableRateLimiting("password-reset")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ForgotPassword(
+        [FromBody] ForgotPasswordRequest request,
+        CancellationToken ct)
+    {
+        var result = await _passwordResetService.RequestAsync(request, ct);
+        if (!result.IsSuccess)
+            return BadRequest(new ProblemDetails
+            {
+                Title = result.ErrorCode,
+                Detail = result.ErrorMessage,
+                Status = StatusCodes.Status400BadRequest,
+            });
+
+        return Accepted(new { message = "Nếu email tồn tại, mã OTP đã được gửi. Vui lòng kiểm tra hộp thư." });
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/auth/reset-password
+    // -------------------------------------------------------------------------
+    /// <summary>Xác thực OTP và đặt mật khẩu mới.</summary>
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    [EnableRateLimiting("password-reset")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword(
+        [FromBody] ResetPasswordRequest request,
+        CancellationToken ct)
+    {
+        var result = await _passwordResetService.ResetAsync(request, ct);
         if (!result.IsSuccess)
             return BadRequest(new ProblemDetails
             {

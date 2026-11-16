@@ -9,6 +9,7 @@ public class BonBonDbContext(DbContextOptions<BonBonDbContext> options) : DbCont
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<AccountRole> AccountRoles => Set<AccountRole>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<PasswordResetOtp> PasswordResetOtps => Set<PasswordResetOtp>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -18,6 +19,7 @@ public class BonBonDbContext(DbContextOptions<BonBonDbContext> options) : DbCont
         ConfigureRole(modelBuilder);
         ConfigureAccountRole(modelBuilder);
         ConfigureRefreshToken(modelBuilder);
+        ConfigurePasswordResetOtp(modelBuilder);
     }
 
     // -------------------------------------------------------------------------
@@ -198,6 +200,54 @@ public class BonBonDbContext(DbContextOptions<BonBonDbContext> options) : DbCont
 
             e.HasIndex(x => new { x.AccountId, x.RevokedAt })
              .HasDatabaseName("ix_refresh_token_account_active");
+        });
+    }
+
+    private static void ConfigurePasswordResetOtp(ModelBuilder b)
+    {
+        b.Entity<PasswordResetOtp>(e =>
+        {
+            e.ToTable("password_reset_otp");
+            e.HasKey(x => x.Id);
+
+            e.Property(x => x.Id)
+             .HasColumnName("id")
+             .HasColumnType("uuid")
+             .HasDefaultValueSql("gen_random_uuid()");
+
+            e.Property(x => x.Email)
+             .HasColumnName("email")
+             .HasColumnType("varchar(254)")
+             .IsRequired();
+
+            e.Property(x => x.OtpHash)
+             .HasColumnName("otp_hash")
+             .HasColumnType("varchar(512)")
+             .IsRequired();
+
+            e.Property(x => x.ExpiresAt)
+             .HasColumnName("expires_at")
+             .HasColumnType("timestamptz");
+
+            e.Property(x => x.CreatedAt)
+             .HasColumnName("created_at")
+             .HasColumnType("timestamptz")
+             .HasDefaultValueSql("now()");
+
+            e.Property(x => x.ConsumedAt)
+             .HasColumnName("consumed_at")
+             .HasColumnType("timestamptz")
+             .IsRequired(false);
+
+            e.Property(x => x.AttemptCount)
+             .HasColumnName("attempt_count")
+             .HasDefaultValue(0)
+             .IsRequired();
+
+            e.Ignore(x => x.IsActive);
+
+            e.HasIndex(x => x.Email)
+             .HasDatabaseName("ix_password_reset_otp_email_created");
         });
     }
 }

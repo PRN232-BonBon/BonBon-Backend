@@ -60,6 +60,7 @@ else builder.Services.AddDbContext<BonBonDbContext>(options =>
 // ─── Repositories ────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IAccountRepository,      AccountRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<IPasswordResetOtpRepository, PasswordResetOtpRepository>();
 builder.Services.AddScoped<IBookingRepository,      BookingRepository>();
 builder.Services.AddScoped<ITrackingRepository,     TrackingRepository>();
 builder.Services.AddScoped<IVehicleRepository,      VehicleRepository>();
@@ -68,6 +69,9 @@ builder.Services.AddScoped<IAdminRepository,        AdminRepository>();
 // ─── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IJwtService,  JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IPasswordResetService, PasswordResetService>();
+builder.Services.AddTransient<IEmailSender, SmtpEmailSender>();
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
 builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddSignalR();
@@ -133,6 +137,9 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("admin-login", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    options.AddPolicy("password-reset", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
@@ -215,6 +222,30 @@ builder.Services.AddSwaggerGen(c =>
 
 // ─── Build ───────────────────────────────────────────────────────────────────
 var app = builder.Build();
+// Tự tạo bảng OTP đặt lại mật khẩu nếu DB test chung chưa chạy migration 013
+// (tránh 500 undefined_table ở POST /api/auth/forgot-password).
+try
+{
+    using var otpScope = app.Services.CreateScope();
+    var otpDb = otpScope.ServiceProvider.GetRequiredService<BonBonDbContext>();
+    await otpDb.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS bonbon.password_reset_otp (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            email varchar(254) NOT NULL CHECK (btrim(email) <> ''),
+            otp_hash varchar(512) NOT NULL CHECK (btrim(otp_hash) <> ''),
+            expires_at timestamptz NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            consumed_at timestamptz,
+            attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)
+        );
+        CREATE INDEX IF NOT EXISTS ix_password_reset_otp_email_created
+            ON bonbon.password_reset_otp (lower(btrim(email)), created_at DESC);
+        """);
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "Không thể tự tạo bảng bonbon.password_reset_otp — hãy chạy migration 013_password_reset_otp.sql tay.");
+}
 if(paymentLocal)
     await PaymentLocal.VerifySchemaAsync(app.Services.GetRequiredService<Npgsql.NpgsqlDataSource>());
 else if(paymentStaging)

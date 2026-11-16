@@ -28,6 +28,7 @@
     <None Include="../database/migrations/010_optional_password_hash.sql" Link="Sql/010_optional_password_hash.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/migrations/011_pending_booking_holds.sql" Link="Sql/011_pending_booking_holds.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/migrations/012_weekly_discount_duration.sql" Link="Sql/012_weekly_discount_duration.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../database/migrations/013_password_reset_otp.sql" Link="Sql/013_password_reset_otp.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/operations/convert_legacy_pending_to_instant.sql" Link="Sql/convert_legacy_pending_to_instant.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/seeds/payment_sample.sql" Link="Sql/payment_sample.sql" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../database/proposals/004_vnpay_sandbox.sql" Link="Sql/004_vnpay_sandbox.sql" CopyToOutputDirectory="PreserveNewest" />
